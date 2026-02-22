@@ -997,7 +997,9 @@ def auto_add_account_with_proxy(api_key: str, name: str, provider: str = "iflow"
 # ============================================================
 
 def reassign_account_proxy(account_id: str, proxy_str: str = "") -> dict | None:
-    """Reassign proxy for a single account. If proxy_str is empty, pick from pool."""
+    """Reassign proxy for a single account. If proxy_str is empty, pick from pool.
+    Also updates the paired account (same pair_id) to share the same proxy slot.
+    """
     with _lock:
         d = _read()
         acc = None
@@ -1024,6 +1026,14 @@ def reassign_account_proxy(account_id: str, proxy_str: str = "") -> dict | None:
                     break
 
         acc["proxy"] = proxy_str
+
+        # Also update paired account (same pair_id) without consuming another proxy slot
+        pair_id = acc.get("pair_id", "")
+        if pair_id:
+            for a in d["accounts"]:
+                if a["id"] != account_id and a.get("pair_id") == pair_id:
+                    a["proxy"] = proxy_str
+
         _write(d)
         return acc
 
