@@ -627,7 +627,8 @@ def _truncate_context(body: dict) -> dict:
     # Build truncation notice
     removed_count = len(removed_indices)
     if removed_count > 0 and notice_template:
-        notice_text = notice_template.replace("{removed_count}", str(removed_count))
+        kept_count = len(kept_removable) + len(protected)
+        notice_text = notice_template.replace("{removed}", str(removed_count)).replace("{kept}", str(kept_count))
         notice_msg = {
             "role": "user",
             "content": [{"type": "text", "text": notice_text}],
@@ -652,7 +653,8 @@ def _truncate_context(body: dict) -> dict:
             kept_removable.pop(0)
             removed_count += 1
             if notice_template:
-                notice_text = notice_template.replace("{removed_count}", str(removed_count))
+                kept_count = len(kept_removable) + len(protected)
+                notice_text = notice_template.replace("{removed}", str(removed_count)).replace("{kept}", str(kept_count))
                 notice_msg = {
                     "role": "user",
                     "content": [{"type": "text", "text": notice_text}],

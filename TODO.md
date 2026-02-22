@@ -7,7 +7,7 @@
 - [x] 3. `proxy.py` — Wire `_truncate_context()` into `/v1/messages` endpoint
 - [x] 4. `static/admin.html` — Add Context Window settings UI card
 - [x] 5. `data.json` — Enable context_window with defaults
-- [ ] 6. Git push
+- [x] 6. Git push
 
 ## Design Notes
 - Always keep: system prompt + last 20 messages
