@@ -868,30 +868,42 @@ async function clearLogs(){
 // ── Registration ──
 var _regPoll = null;
 var _regLogEs = null;
+var _regLogOffset = 0;
+var _regLogPollTimer = null;
 
 async function loadReg() {
   await Promise.all([loadRegQueue(), loadRegResults(), loadRegStatus(), loadRegProxies()]);
 }
 
+async function _pollRegLog() {
+  try {
+    var r = await apiFetch('/api/reg/log-poll?offset=' + _regLogOffset).then(function(x){return x.json()});
+    if(r.lines && r.lines.length) {
+      var logEl = document.getElementById('r-log');
+      logEl.textContent += r.lines.join('\n') + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+      _regLogOffset = r.total;
+    }
+  } catch(e) {}
+}
+
 function _startRegLogStream() {
-  if(_regLogEs) return;
+  if(_regLogPollTimer) return;
+  _regLogOffset = 0;
   var logCard = document.getElementById('r-log-card');
-  var logEl = document.getElementById('r-log');
   logCard.style.display='';
-  _regLogEs = new EventSource('/api/reg/log-stream');
-  _regLogEs.onmessage = function(e) {
-    logEl.textContent += e.data + '\n';
-    logEl.scrollTop = logEl.scrollHeight;
-  };
-  _regLogEs.onerror = function() { _regLogEs.close(); _regLogEs = null; };
+  _pollRegLog();
+  _regLogPollTimer = setInterval(_pollRegLog, 1500);
 }
 
 function _stopRegLogStream() {
+  if(_regLogPollTimer){clearInterval(_regLogPollTimer);_regLogPollTimer=null;}
   if(_regLogEs){_regLogEs.close();_regLogEs=null;}
 }
 
 function clearRegLog() {
   document.getElementById('r-log').textContent='';
+  _regLogOffset = 0;
 }
 
 async function loadRegQueue() {

@@ -152,7 +152,7 @@ def _is_proxy_error(exc: Exception) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _http_client, _auto_refresh, _qwen_auto_refresh, _proxy_checker_task
+    global _http_client, _auto_refresh, _qwen_auto_refresh, _proxy_checker_task, _reg_log_reader_task
 
     # Get proxy settings
     settings = store.get_settings()
@@ -205,6 +205,7 @@ async def lifespan(app: FastAPI):
     _qwen_auto_refresh.start()
 
     _proxy_checker_task = asyncio.create_task(_proxy_health_loop(interval=600))
+    _reg_log_reader_task = asyncio.create_task(_reg_log_reader())
 
     # Reset stale reg status from previous run
     if store.get_reg_status().get("running"):
@@ -216,6 +217,7 @@ async def lifespan(app: FastAPI):
     _auto_refresh.stop()
     _qwen_auto_refresh.stop()
     _proxy_checker_task.cancel()
+    _reg_log_reader_task.cancel()
     await _http_client.aclose()
     for pc in _proxy_clients.values():
         await pc.aclose()
@@ -1737,6 +1739,27 @@ async def api_qwen_status():
 import subprocess as _subprocess
 
 _reg_process: _subprocess.Popen | None = None
+_reg_log_buffer: deque[str] = deque(maxlen=500)
+_reg_log_reader_task: asyncio.Task | None = None
+
+
+async def _reg_log_reader():
+    """Background task: reads reg subprocess stdout into _reg_log_buffer."""
+    while True:
+        proc = _reg_process
+        if proc is None or proc.stdout is None:
+            await asyncio.sleep(0.5)
+            continue
+        try:
+            line = await asyncio.get_running_loop().run_in_executor(
+                None, proc.stdout.readline
+            )
+            if line:
+                _reg_log_buffer.append(line.decode("utf-8", errors="replace").rstrip())
+            else:
+                await asyncio.sleep(0.2)
+        except Exception:
+            await asyncio.sleep(0.5)
 
 
 @app.get("/api/reg/accounts")
@@ -1822,6 +1845,7 @@ async def api_reg_start(request: Request):
         cmd.append("--headless")
     cmd.extend(["--workers", str(workers)])
 
+    _reg_log_buffer.clear()
     _reg_process = _subprocess.Popen(
         cmd,
         cwd=str(Path(__file__).parent),
@@ -1886,6 +1910,13 @@ async def api_reg_log_stream():
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/reg/log-poll")
+async def api_reg_log_poll(offset: int = 0):
+    """Return reg log lines from offset. Use instead of EventSource for auth support."""
+    lines = list(_reg_log_buffer)
+    return JSONResponse({"lines": lines[offset:], "total": len(lines)})
 
 
 # ── Registration Proxy Management ──
