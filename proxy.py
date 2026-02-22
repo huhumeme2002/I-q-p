@@ -1816,7 +1816,7 @@ async def api_reg_start(request: Request):
     proxy_file.write_text(json.dumps(proxies, ensure_ascii=False), encoding="utf-8")
 
     # Launch reg_iflow.py as subprocess
-    cmd = [sys.executable, str(Path(__file__).parent / "reg_iflow.py")]
+    cmd = [sys.executable, "-u", str(Path(__file__).parent / "reg_iflow.py")]
     if use_proxy and proxies:
         cmd.append("--proxy")
     if headless:
