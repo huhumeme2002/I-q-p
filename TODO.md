@@ -2,11 +2,11 @@
 
 ## Steps
 
-- [ ] 1. `store.py` — Add context_window settings (DEFAULT_DATA, getter, update_settings)
-- [ ] 2. `proxy.py` — Add `_truncate_context(body)` function with smart message trimming
-- [ ] 3. `proxy.py` — Wire `_truncate_context()` into `/v1/messages` endpoint
-- [ ] 4. `static/admin.html` — Add Context Window settings UI card
-- [ ] 5. `data.json` — Enable context_window with defaults
+- [x] 1. `store.py` — Add context_window settings (DEFAULT_DATA, getter, update_settings)
+- [x] 2. `proxy.py` — Add `_truncate_context(body)` function with smart message trimming
+- [x] 3. `proxy.py` — Wire `_truncate_context()` into `/v1/messages` endpoint
+- [x] 4. `static/admin.html` — Add Context Window settings UI card
+- [x] 5. `data.json` — Enable context_window with defaults
 - [ ] 6. Git push
 
 ## Design Notes

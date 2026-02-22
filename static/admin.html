@@ -257,6 +257,34 @@ pre{background:var(--s2);padding:14px;border-radius:8px;font-family:monospace;fo
     </div>
     <button class="btn bp" onclick="saveAC()">Save Auto-Continue Settings</button>
   </div>
+
+  <!-- Context Window Management -->
+  <div class="card" id="cw-card">
+    <div class="ct">&#x1F4CF; Context Window <span style="font-size:10px;color:var(--a2);font-weight:400;text-transform:none">(Auto-Truncate Long Conversations)</span></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <label class="tg"><input type="checkbox" id="cw-enabled" onchange="saveCW()"><span class="ts"></span></label>
+      <span style="font-size:13px">Enable Context Window Management</span>
+      <span style="color:var(--m);font-size:11px;margin-left:4px">&mdash; Auto-truncate old messages when context exceeds limit</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div class="fg">
+        <label class="fl">Max Tokens</label>
+        <input class="fi" type="number" id="cw-max-tokens" min="5000" max="200000" step="1000" value="60000" style="width:100%">
+        <div style="color:var(--m);font-size:11px;margin-top:3px">Estimated token limit before truncation kicks in</div>
+      </div>
+      <div class="fg">
+        <label class="fl">Keep Recent Messages</label>
+        <input class="fi" type="number" id="cw-keep-recent" min="5" max="100" value="20" style="width:100%">
+        <div style="color:var(--m);font-size:11px;margin-top:3px">Always preserve the last N messages</div>
+      </div>
+    </div>
+    <div class="fg">
+      <label class="fl">Truncation Notice</label>
+      <textarea class="fi" id="cw-notice" rows="3" style="width:100%;resize:vertical"></textarea>
+      <div style="color:var(--m);font-size:11px;margin-top:3px">Message inserted at the cut point. Use {removed} and {kept} placeholders.</div>
+    </div>
+    <button class="btn bp" onclick="saveCW()">Save Context Window Settings</button>
+  </div>
 </div>
 
 <!-- Registration -->
@@ -822,6 +850,12 @@ async function loadCfg(){
   document.getElementById('ac-max-retries').value=ac.max_retries||3;
   document.getElementById('ac-only-tools').checked=ac.only_with_tools!==false;
   document.getElementById('ac-message').value=ac.message||'You stopped without using any tools. Continue and complete the task by actually calling the appropriate tools. Do not just describe what you would do - do it.';
+  // Context Window settings
+  var cw=d.context_window||{};
+  document.getElementById('cw-enabled').checked=!!cw.enabled;
+  document.getElementById('cw-max-tokens').value=cw.max_tokens||60000;
+  document.getElementById('cw-keep-recent').value=cw.keep_recent_messages||20;
+  document.getElementById('cw-notice').value=cw.truncation_notice||'[Note: {removed} older messages were truncated to fit context window. {kept} recent messages preserved.]';
 }
 
 function toggleVisionFields(){
@@ -875,6 +909,19 @@ async function saveAC(){
   };
   var r=await apiFetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   if(r.ok)toast('Auto-Continue settings saved');else toast('Error saving settings','err');
+}
+
+async function saveCW(){
+  var payload={
+    context_window:{
+      enabled:document.getElementById('cw-enabled').checked,
+      max_tokens:parseInt(document.getElementById('cw-max-tokens').value)||60000,
+      keep_recent_messages:parseInt(document.getElementById('cw-keep-recent').value)||20,
+      truncation_notice:document.getElementById('cw-notice').value.trim()
+    }
+  };
+  var r=await apiFetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(r.ok)toast('Context Window settings saved');else toast('Error saving settings','err');
 }
 
 async function saveVision(){
