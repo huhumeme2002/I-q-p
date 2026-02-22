@@ -1845,7 +1845,7 @@ async def api_reg_start(request: Request):
         cmd.append("--headless")
     cmd.extend(["--workers", str(workers)])
 
-    _reg_log_buffer.clear()
+    _reg_log_buffer.append("─" * 40)
     _reg_process = _subprocess.Popen(
         cmd,
         cwd=str(Path(__file__).parent),

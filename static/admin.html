@@ -946,7 +946,9 @@ async function loadRegStatus() {
     startBtn.style.display='inline-flex';
     stopBtn.style.display='none';
     if(_regPoll){clearInterval(_regPoll);_regPoll=null;}
-    _stopRegLogStream();
+    // Stop polling but keep log card visible so user can read the output
+    if(_regLogPollTimer){clearInterval(_regLogPollTimer);_regLogPollTimer=null;}
+    if(_regLogEs){_regLogEs.close();_regLogEs=null;}
   }
 }
 
@@ -1018,6 +1020,10 @@ async function startReg() {
   var useProxy = document.getElementById('r-proxy').checked;
   var workers = parseInt(document.getElementById('r-workers').value)||1;
   var headless = document.getElementById('r-headless').checked;
+  // Reset log display before starting
+  document.getElementById('r-log').textContent='';
+  _regLogOffset = 0;
+  if(_regLogPollTimer){clearInterval(_regLogPollTimer);_regLogPollTimer=null;}
   var r = await apiFetch('/api/reg/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({use_proxy:useProxy,workers:workers,headless:headless})});
   if(r.ok){toast('Registration started! ('+workers+' worker'+(workers>1?'s':'')+', '+(headless?'headless':'visible')+')');loadRegStatus()}
   else{var d=await r.json();toast(d.detail||'Error','err')}
