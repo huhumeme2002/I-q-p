@@ -667,9 +667,7 @@ def anthropic_to_openai(body: dict, model: str, provider: str = "iflow") -> dict
             "enable_thinking": store.get_enable_thinking(),
         }
         if "max_tokens" in body:
-            out["max_new_tokens"] = max(body["max_tokens"], 8000)
-        else:
-            out["max_new_tokens"] = 32000
+            out["max_new_tokens"] = body["max_tokens"]
         if has_tools:
             out["tools"] = anthropic_tools_to_openai(body["tools"])
         if "tool_choice" in body:
@@ -982,70 +980,6 @@ def _estimate_tokens(body: dict) -> int:
     return max(1, total)
 
 
-# Max input tokens before trimming (configurable via CONTEXT_LIMIT env var)
-_CONTEXT_LIMIT = int(os.environ.get("CONTEXT_LIMIT", "60000"))
-_TOOL_RESULT_TRUNCATE = 500  # chars to keep per tool result when truncating
-
-
-def _truncate_tool_results(messages: list, keep_last_n: int = 4) -> list:
-    """Pass 1: truncate large tool_result content in older messages."""
-    result = []
-    for i, msg in enumerate(messages):
-        # Keep last N messages intact
-        if i >= len(messages) - keep_last_n:
-            result.append(msg)
-            continue
-        content = msg.get("content", "")
-        if not isinstance(content, list):
-            result.append(msg)
-            continue
-        new_content = []
-        changed = False
-        for block in content:
-            if block.get("type") == "tool_result":
-                inner = block.get("content", "")
-                text = inner if isinstance(inner, str) else (
-                    " ".join(b.get("text", "") for b in inner if isinstance(b, dict) and b.get("type") == "text")
-                    if isinstance(inner, list) else ""
-                )
-                if len(text) > _TOOL_RESULT_TRUNCATE:
-                    truncated = text[:_TOOL_RESULT_TRUNCATE] + "…[truncated]"
-                    new_content.append({**block, "content": truncated})
-                    changed = True
-                    continue
-            new_content.append(block)
-        result.append({**msg, "content": new_content} if changed else msg)
-    return result
-
-
-def _trim_messages(body: dict) -> dict:
-    """Smart context trimming:
-    1. Truncate tool_result content in older messages first
-    2. If still over limit, drop oldest messages (keep at least last 4)
-    """
-    if _estimate_tokens(body) <= _CONTEXT_LIMIT:
-        return body
-
-    messages = list(body.get("messages", []))
-    if len(messages) <= 2:
-        return body
-
-    # Pass 1: truncate old tool results
-    messages = _truncate_tool_results(messages)
-    candidate = {**body, "messages": messages}
-    if _estimate_tokens(candidate) <= _CONTEXT_LIMIT:
-        logger.info(f"[ContextTrim] Truncated tool results → ~{_estimate_tokens(candidate)} tokens")
-        return candidate
-
-    # Pass 2: drop oldest messages, keep at least last 4
-    while len(messages) > 4:
-        messages.pop(0)
-        candidate = {**body, "messages": messages}
-        if _estimate_tokens(candidate) <= _CONTEXT_LIMIT:
-            break
-
-    logger.info(f"[ContextTrim] Trimmed to {len(messages)} messages (~{_estimate_tokens(candidate)} tokens)")
-    return candidate
 
 async def count_tokens(request: Request):
     try:
@@ -1128,7 +1062,6 @@ async def messages(request: Request):
     is_stream = body.get("stream", False)
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 
-    body = _trim_messages(body)
 
     account = store.pick_account()
     if not account:
