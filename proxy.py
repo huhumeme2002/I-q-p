@@ -1163,6 +1163,12 @@ async def messages(request: Request):
                 cur_model = (cur_account.get("qwen_model") or store.get_qwen_default_model()) if cur_provider == "qwen" else store.get_default_model()
                 cur_body = _build_openai_request(body, cur_model, cur_provider)
 
+                # Debug logging
+                _dbg = os.environ.get("DEBUG_REQUESTS", "").lower() in ("1", "true")
+                if _dbg:
+                    msgs_summary = [{"role": m.get("role"), "content_len": len(str(m.get("content",""))), "has_tool_calls": bool(m.get("tool_calls"))} for m in cur_body.get("messages", [])]
+                    logger.info(f"[DEBUG] → {cur_model} | stream={cur_body.get('stream')} | msgs={len(msgs_summary)} | tools={len(cur_body.get('tools',[]))} | {msgs_summary[-2:]}")
+
                 if cur_proxy and cur_proxy not in _proxy_clients:
                     _proxy_clients[cur_proxy] = httpx.AsyncClient(
                         proxy=cur_proxy,
@@ -1250,6 +1256,11 @@ async def messages(request: Request):
         cur_model = (cur_account.get("qwen_model") or store.get_qwen_default_model()) if cur_provider == "qwen" else store.get_default_model()
         cur_body = _build_openai_request(body, cur_model, cur_provider)
 
+        _dbg = os.environ.get("DEBUG_REQUESTS", "").lower() in ("1", "true")
+        if _dbg:
+            msgs_summary = [{"role": m.get("role"), "content_len": len(str(m.get("content",""))), "has_tool_calls": bool(m.get("tool_calls"))} for m in cur_body.get("messages", [])]
+            logger.info(f"[DEBUG] → {cur_model} | stream=False | msgs={len(msgs_summary)} | tools={len(cur_body.get('tools',[]))} | {msgs_summary[-2:]}")
+
         if cur_proxy and cur_proxy not in _proxy_clients:
             _proxy_clients[cur_proxy] = httpx.AsyncClient(
                 proxy=cur_proxy,
@@ -1303,6 +1314,10 @@ async def messages(request: Request):
 
         try:
             openai_resp = resp.json()
+            if _dbg:
+                finish = openai_resp.get("choices", [{}])[0].get("finish_reason")
+                usage_dbg = openai_resp.get("usage", {})
+                logger.info(f"[DEBUG] ← {cur_model} | stream=False | finish={finish} | usage={usage_dbg}")
             anthropic_resp = _parse_openai_response(openai_resp, cur_model)
             usage = openai_resp.get("usage", {})
             store.finalize_request(cur_id, cur_name, cur_model, "success", preview, int((time.time() - t0) * 1000), usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
