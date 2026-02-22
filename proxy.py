@@ -1169,7 +1169,7 @@ async def messages(request: Request):
 
     if is_stream:
         async def gen():
-            nonlocal account, body
+            nonlocal account, body, msg_id
             _usage = {}
             ac_attempt = 0  # auto-continue attempt counter
             attempt = 0
