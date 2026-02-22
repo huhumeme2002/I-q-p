@@ -1027,12 +1027,30 @@ def reassign_account_proxy(account_id: str, proxy_str: str = "") -> dict | None:
 
         acc["proxy"] = proxy_str
 
-        # Also update paired account (same pair_id) without consuming another proxy slot
+        # Update paired account — match by pair_id first, fall back to email matching
         pair_id = acc.get("pair_id", "")
-        if pair_id:
-            for a in d["accounts"]:
-                if a["id"] != account_id and a.get("pair_id") == pair_id:
-                    a["proxy"] = proxy_str
+        acc_provider = acc.get("provider", "")
+        acc_name = acc.get("name", "")
+        acc_qwen_email = acc.get("qwen_email", "")
+
+        for a in d["accounts"]:
+            if a["id"] == account_id:
+                continue
+            matched = False
+            if pair_id and a.get("pair_id") == pair_id:
+                matched = True
+            elif not pair_id:
+                # Fallback: iflow name matches qwen_email prefix, or vice versa
+                a_qwen = a.get("qwen_email", "")
+                a_name = a.get("name", "")
+                if acc_provider == "iflow" and a.get("provider") == "qwen":
+                    if a_qwen and (acc_name == a_qwen.split("@")[0] or acc_name in a_qwen):
+                        matched = True
+                elif acc_provider == "qwen" and a.get("provider") == "iflow":
+                    if acc_qwen_email and (a_name == acc_qwen_email.split("@")[0] or a_name in acc_qwen_email):
+                        matched = True
+            if matched:
+                a["proxy"] = proxy_str
 
         _write(d)
         return acc
