@@ -503,6 +503,176 @@ async def process_vision_in_messages(body: dict) -> dict:
 
 
 # ============================================================
+# CONTEXT WINDOW: Truncate long conversations to fit model limits
+# ============================================================
+
+def _truncate_context(body: dict) -> dict:
+    """Truncate conversation messages to fit within the configured token limit.
+
+    Strategy:
+    - Always keep: system prompt (not in messages array)
+    - Always keep: last `keep_recent_messages` messages
+    - Remove oldest messages first, but keep tool_use/tool_result pairs together
+    - Insert a truncation notice at the cut point
+    - Fast path: if total tokens < max_tokens, return body unchanged (no copy)
+
+    Messages in Anthropic format:
+    - assistant messages may contain tool_use blocks (with "id" field)
+    - user messages may contain tool_result blocks (with "tool_use_id" field)
+    - These are paired and must not be orphaned
+    """
+    cw = store.get_context_window_settings()
+    cw_logger = logging.getLogger("proxy.contextwindow")
+
+    if not cw.get("enabled"):
+        return body
+
+    max_tokens = cw.get("max_tokens", 60000)
+    keep_recent = cw.get("keep_recent_messages", 20)
+    notice_template = cw.get("truncation_notice", "")
+
+    messages = body.get("messages", [])
+    if not messages:
+        return body
+
+    # Fast path: estimate tokens without copying
+    estimated = _estimate_tokens(body)
+    if estimated <= max_tokens:
+        cw_logger.debug(
+            f"[ContextWindow:SKIP] {estimated} tokens <= {max_tokens} limit | "
+            f"msgs={len(messages)}"
+        )
+        return body
+
+    cw_logger.info(
+        f"[ContextWindow:TRUNCATE] {estimated} tokens > {max_tokens} limit | "
+        f"msgs={len(messages)} | keep_recent={keep_recent}"
+    )
+
+    # Deep copy since we'll mutate
+    body = copy.deepcopy(body)
+    messages = body["messages"]
+
+    # Ensure keep_recent doesn't exceed total messages
+    keep_recent = min(keep_recent, len(messages))
+
+    # Split into removable (old) and protected (recent) sections
+    removable = messages[:-keep_recent] if keep_recent > 0 else messages[:]
+    protected = messages[-keep_recent:] if keep_recent > 0 else []
+
+    if not removable:
+        cw_logger.info(
+            f"[ContextWindow:SKIP] All {len(messages)} messages are in keep_recent zone"
+        )
+        return body
+
+    # Collect all tool_use IDs referenced in protected messages (tool_result blocks)
+    protected_tool_ids = set()
+    for msg in protected:
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "tool_result":
+                    tid = block.get("tool_use_id", "")
+                    if tid:
+                        protected_tool_ids.add(tid)
+
+    # Build set of tool_use IDs that exist in removable messages
+    # If a tool_use in removable is referenced by a tool_result in protected,
+    # we must keep that message
+    must_keep_indices = set()
+    for i, msg in enumerate(removable):
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "tool_use":
+                    tid = block.get("id", "")
+                    if tid and tid in protected_tool_ids:
+                        must_keep_indices.add(i)
+
+    # Also check: if a removable user message has tool_result referencing
+    # a tool_use in another removable message that we're keeping, keep it too
+    removable_tool_use_ids = {}  # tool_use_id -> message index
+    for i, msg in enumerate(removable):
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "tool_use":
+                    removable_tool_use_ids[block.get("id", "")] = i
+
+    for i, msg in enumerate(removable):
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "tool_result":
+                    tid = block.get("tool_use_id", "")
+                    if tid in removable_tool_use_ids:
+                        pair_idx = removable_tool_use_ids[tid]
+                        if pair_idx in must_keep_indices:
+                            must_keep_indices.add(i)
+                        elif i in must_keep_indices:
+                            must_keep_indices.add(pair_idx)
+
+    # Remove messages from oldest, skipping must-keep ones
+    # Keep removing until we're under the token limit
+    removed_indices = set()
+    for i in range(len(removable)):
+        if i in must_keep_indices:
+            continue
+        removed_indices.add(i)
+
+    # Rebuild messages: kept removable + protected
+    kept_removable = [msg for i, msg in enumerate(removable) if i not in removed_indices]
+
+    # Build truncation notice
+    removed_count = len(removed_indices)
+    if removed_count > 0 and notice_template:
+        notice_text = notice_template.replace("{removed_count}", str(removed_count))
+        notice_msg = {
+            "role": "user",
+            "content": [{"type": "text", "text": notice_text}],
+        }
+        new_messages = kept_removable + [notice_msg] + protected
+    else:
+        new_messages = kept_removable + protected
+
+    body["messages"] = new_messages
+
+    # Re-estimate to verify
+    new_estimated = _estimate_tokens(body)
+
+    # If still over limit after first pass, do aggressive trimming of kept_removable
+    if new_estimated > max_tokens and kept_removable:
+        cw_logger.info(
+            f"[ContextWindow:AGGRESSIVE] Still {new_estimated} tokens after removing "
+            f"{removed_count} msgs. Trimming remaining old messages..."
+        )
+        # Remove kept_removable messages one by one from oldest until under limit
+        while kept_removable and _estimate_tokens(body) > max_tokens:
+            kept_removable.pop(0)
+            removed_count += 1
+            if notice_template:
+                notice_text = notice_template.replace("{removed_count}", str(removed_count))
+                notice_msg = {
+                    "role": "user",
+                    "content": [{"type": "text", "text": notice_text}],
+                }
+                body["messages"] = kept_removable + [notice_msg] + protected
+            else:
+                body["messages"] = kept_removable + protected
+
+        new_estimated = _estimate_tokens(body)
+
+    cw_logger.warning(
+        f"[ContextWindow:DONE] {estimated} → {new_estimated} tokens | "
+        f"msgs: {len(messages)} → {len(body['messages'])} | "
+        f"removed: {removed_count}"
+    )
+
+    return body
+
+
+# ============================================================
 # AUTO-CONTINUE: Detect lazy model responses and retry with nudge
 # ============================================================
 
@@ -1201,6 +1371,9 @@ async def messages(request: Request):
 
     # Vision fallback: replace image blocks with text descriptions
     body = await process_vision_in_messages(body)
+
+    # Context window: truncate long conversations to fit model limits
+    body = _truncate_context(body)
 
     t0 = time.time()
     preview = ""

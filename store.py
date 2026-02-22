@@ -61,6 +61,12 @@ DEFAULT_DATA = {
             "only_with_tools": True,
             "message": "You stopped without using any tools. Continue and complete the task by actually calling the appropriate tools. Do not just describe what you would do - do it.",
         },
+        "context_window": {
+            "enabled": False,
+            "max_tokens": 60000,
+            "keep_recent_messages": 20,
+            "truncation_notice": "[Context truncated: {removed_count} earlier messages were removed to fit the model's context window. The conversation continues from the most recent messages below.]",
+        },
     },
     "stats": {"total_requests": 0, "total_errors": 0, "start_time": None},
     "logs": [],
@@ -544,6 +550,10 @@ def update_settings(**kwargs) -> dict:
                 if "auto_continue" not in d["settings"]:
                     d["settings"]["auto_continue"] = {}
                 d["settings"]["auto_continue"].update(v)
+            elif k == "context_window" and isinstance(v, dict):
+                if "context_window" not in d["settings"]:
+                    d["settings"]["context_window"] = {}
+                d["settings"]["context_window"].update(v)
         _write(d)
         return d["settings"]
 
@@ -625,6 +635,13 @@ def get_auto_continue_settings() -> dict:
     default = DEFAULT_DATA["settings"]["auto_continue"].copy()
     ac = get_settings().get("auto_continue", {})
     default.update(ac)
+    return default
+
+
+def get_context_window_settings() -> dict:
+    default = DEFAULT_DATA["settings"]["context_window"].copy()
+    cw = get_settings().get("context_window", {})
+    default.update(cw)
     return default
 
 
