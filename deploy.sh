@@ -25,13 +25,18 @@ else
     echo "[2/7] User '$APP_USER' already exists"
 fi
 
-# 3. Copy project files
+# 3. Copy project files (skip if already in APP_DIR — e.g. cloned directly)
 echo "[3/7] Setting up project directory..."
 sudo mkdir -p "$APP_DIR"
-sudo cp proxy.py store.py iflow_auth.py requirements.txt "$APP_DIR/"
-sudo cp -r static "$APP_DIR/" 2>/dev/null || true
-if $INSTALL_REG; then
-    sudo cp reg_iflow.py "$APP_DIR/" 2>/dev/null || true
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$SCRIPT_DIR" != "$APP_DIR" ]; then
+    sudo cp proxy.py store.py iflow_auth.py qwen_auth.py requirements.txt "$APP_DIR/"
+    sudo cp -r static "$APP_DIR/" 2>/dev/null || true
+    if $INSTALL_REG; then
+        sudo cp reg_iflow.py "$APP_DIR/" 2>/dev/null || true
+    fi
+else
+    echo "  Already in $APP_DIR, skipping copy"
 fi
 sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
@@ -83,3 +88,9 @@ if $INSTALL_REG; then
     echo "  sudo -u $APP_USER xvfb-run $APP_DIR/venv/bin/python $APP_DIR/reg_iflow.py"
     echo "  Or launch from admin UI: http://<your-vps-ip>:8083/admin"
 fi
+
+# Create update-git alias
+echo "alias update-git='cd $APP_DIR && git pull origin master && sudo systemctl restart $SERVICE_NAME'" >> ~/.bashrc
+source ~/.bashrc
+echo ""
+echo "  Update alias created: run 'update-git' to pull latest code and restart service"
