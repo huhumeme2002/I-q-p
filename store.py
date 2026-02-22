@@ -683,6 +683,8 @@ def finalize_request(
             "status": status,
             "preview": preview[:100] if preview else "",
             "duration": duration,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
         }
         d["logs"].insert(0, log)
         d["logs"] = d["logs"][:MAX_LOGS]

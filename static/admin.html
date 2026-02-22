@@ -854,7 +854,8 @@ async function loadLog(){
       '<span style="color:var(--m);font-size:11px;font-family:monospace">'+l.account_name+'</span>'+
       '<span style="color:var(--a2);font-size:11px;font-family:monospace">'+l.model+'</span>'+
       '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">'+(l.preview||'<em style="color:var(--m)">—</em>')+'</span>'+
-      '<span style="color:var(--m);font-family:monospace;white-space:nowrap;font-size:11px">'+l.duration+'ms</span></div>';
+      '<span style="color:var(--m);font-family:monospace;white-space:nowrap;font-size:11px">'+l.duration+'ms</span>'+
+      '<span style="color:var(--m);font-family:monospace;white-space:nowrap;font-size:11px">'+(l.input_tokens?l.input_tokens+'in/'+l.output_tokens+'out':'—')+'</span></div>';
   }).join('');
 }
 
