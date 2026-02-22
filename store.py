@@ -64,7 +64,7 @@ DEFAULT_DATA = {
         "context_window": {
             "enabled": False,
             "max_tokens": 60000,
-            "keep_recent_messages": 20,
+            "keep_recent_messages": 10,
             "truncation_notice": "[Context truncated: {removed_count} earlier messages were removed to fit the model's context window. The conversation continues from the most recent messages below.]",
         },
     },
