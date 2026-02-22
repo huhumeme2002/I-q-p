@@ -152,7 +152,7 @@ def _is_proxy_error(exc: Exception) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _http_client, _auto_refresh, _qwen_auto_refresh, _proxy_checker_task, _reg_log_reader_task
+    global _http_client, _auto_refresh, _qwen_auto_refresh, _proxy_checker_task
 
     # Get proxy settings
     settings = store.get_settings()
@@ -205,7 +205,6 @@ async def lifespan(app: FastAPI):
     _qwen_auto_refresh.start()
 
     _proxy_checker_task = asyncio.create_task(_proxy_health_loop(interval=600))
-    _reg_log_reader_task = asyncio.create_task(_reg_log_reader())
 
     # Reset stale reg status from previous run
     if store.get_reg_status().get("running"):
@@ -217,7 +216,6 @@ async def lifespan(app: FastAPI):
     _auto_refresh.stop()
     _qwen_auto_refresh.stop()
     _proxy_checker_task.cancel()
-    _reg_log_reader_task.cancel()
     await _http_client.aclose()
     for pc in _proxy_clients.values():
         await pc.aclose()
@@ -1739,34 +1737,7 @@ async def api_qwen_status():
 import subprocess as _subprocess
 
 _reg_process: _subprocess.Popen | None = None
-_reg_log_buffer: deque[str] = deque(maxlen=500)
-_reg_log_reader_task: asyncio.Task | None = None
 _REG_LOG_FILE = Path(__file__).parent / "reg.log"
-
-
-async def _reg_log_reader():
-    """Background task: reads reg subprocess stdout into _reg_log_buffer and reg.log."""
-    while True:
-        proc = _reg_process
-        if proc is None or proc.stdout is None:
-            await asyncio.sleep(0.5)
-            continue
-        try:
-            line = await asyncio.get_running_loop().run_in_executor(
-                None, proc.stdout.readline
-            )
-            if line:
-                text = line.decode("utf-8", errors="replace").rstrip()
-                _reg_log_buffer.append(text)
-                try:
-                    with _REG_LOG_FILE.open("a", encoding="utf-8") as f:
-                        f.write(text + "\n")
-                except Exception:
-                    pass
-            else:
-                await asyncio.sleep(0.2)
-        except Exception:
-            await asyncio.sleep(0.5)
 
 
 @app.get("/api/reg/accounts")
@@ -1857,11 +1828,11 @@ async def api_reg_start(request: Request):
         _REG_LOG_FILE.write_text("", encoding="utf-8")
     except Exception:
         pass
-    _reg_log_buffer.clear()
+    _reg_log_fh = open(_REG_LOG_FILE, "w", encoding="utf-8", buffering=1)
     _reg_process = _subprocess.Popen(
         cmd,
         cwd=str(Path(__file__).parent),
-        stdout=_subprocess.PIPE,
+        stdout=_reg_log_fh,
         stderr=_subprocess.STDOUT,
     )
 
