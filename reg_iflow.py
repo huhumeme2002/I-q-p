@@ -45,6 +45,11 @@ except ImportError:
 _file_lock = asyncio.Lock()
 
 
+def log(tag: str, msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] [{tag}] {msg}", flush=True)
+
+
 # ── Helpers ──
 
 def load_accounts() -> list[dict]:
@@ -92,10 +97,10 @@ async def rotate_proxy(rotate_url: str, worker_id: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(rotate_url)
-            print(f"  [{worker_id}][proxy] Rotate: {resp.status_code} - {resp.text[:80]}")
+            log(worker_id, f"[proxy] Rotate: {resp.status_code} - {resp.text[:80]}")
             return resp.status_code == 200
     except Exception as e:
-        print(f"  [{worker_id}][proxy] Rotate failed: {e}")
+        log(worker_id, f"[proxy] Rotate failed: {e}")
         return False
 
 
@@ -106,11 +111,11 @@ async def google_sign_in(context: BrowserContext, email: str, password: str, tag
     if _stealth_async:
         await _stealth_async(page)
     try:
-        print(f"  [{tag}][1] Opening iFlow...")
+        log(tag, "[1] Opening iFlow...")
         await page.goto(IFLOW_URL, timeout=NAV_TIMEOUT, wait_until="networkidle")
         await page.wait_for_timeout(3000)
 
-        print(f"  [{tag}][2] Clicking Sign in with Google...")
+        log(tag, "[2] Clicking Sign in with Google...")
         google_page = None
         popup_future = asyncio.get_running_loop().create_future()
 
@@ -141,7 +146,7 @@ async def google_sign_in(context: BrowserContext, email: str, password: str, tag
                 except Exception:
                     continue
         if not clicked:
-            print(f"  [{tag}][!] Could not find Google button")
+            log(tag, "[!] Could not find Google button")
             await page.close()
             return False
 
@@ -152,13 +157,13 @@ async def google_sign_in(context: BrowserContext, email: str, password: str, tag
             if "accounts.google.com" in page.url:
                 google_page = page
             else:
-                print(f"  [{tag}][!] No popup/redirect. URL: {page.url}")
+                log(tag, f"[!] No popup/redirect. URL: {page.url}")
                 await page.close()
                 return False
         context.remove_listener("page", on_popup)
 
         # Email
-        print(f"  [{tag}][3] Entering email...")
+        log(tag, "[3] Entering email...")
         await google_page.wait_for_selector("#identifierId", timeout=ACTION_TIMEOUT)
         await google_page.fill("#identifierId", email)
         await google_page.wait_for_timeout(500)
@@ -171,7 +176,7 @@ async def google_sign_in(context: BrowserContext, email: str, password: str, tag
         await google_page.wait_for_timeout(3000)
 
         # Password
-        print(f"  [{tag}][4] Entering password...")
+        log(tag, "[4] Entering password...")
         await google_page.wait_for_selector("input[name='Passwd']", timeout=ACTION_TIMEOUT)
         await google_page.fill("input[name='Passwd']", password)
         await google_page.wait_for_timeout(500)
@@ -184,7 +189,7 @@ async def google_sign_in(context: BrowserContext, email: str, password: str, tag
         await google_page.wait_for_timeout(4000)
 
         # Consent screens
-        print(f"  [{tag}][5] Consent screens...")
+        log(tag, "[5] Consent screens...")
         for sel in ["input[name='confirm']", "button:has-text('Tôi hiểu')", "button:has-text('I understand')"]:
             try:
                 el = google_page.locator(sel).first
@@ -198,7 +203,7 @@ async def google_sign_in(context: BrowserContext, email: str, password: str, tag
                     await b.click(); await google_page.wait_for_timeout(3000); break
             except Exception: continue
 
-        print(f"  [{tag}][6] Waiting for iFlow...")
+        log(tag, "[6] Waiting for iFlow redirect...")
         if google_page != page:
             await page.wait_for_timeout(3000)
             await page.reload(wait_until="networkidle", timeout=NAV_TIMEOUT)
@@ -208,7 +213,7 @@ async def google_sign_in(context: BrowserContext, email: str, password: str, tag
         await page.wait_for_timeout(2000)
 
     except Exception as e:
-        print(f"  [{tag}][!] Error: {e}")
+        log(tag, f"[!] Error: {e}")
         try: await page.close()
         except Exception: pass
         return False
@@ -220,41 +225,40 @@ async def create_api_key(context: BrowserContext, tag: str = "") -> str | None:
     pages = context.pages
     page = pages[-1] if pages else await context.new_page()
     try:
-        print(f"  [{tag}][7] Opening API key page...")
+        log(tag, "[7] Opening API key page...")
         await page.goto(IFLOW_URL, timeout=NAV_TIMEOUT, wait_until="networkidle")
         await page.wait_for_timeout(2000)
 
-        print(f"  [{tag}][8] Create API Key...")
+        log(tag, "[8] Create API Key...")
         await page.locator("text=创建API密钥").first.click(timeout=ACTION_TIMEOUT)
         await page.wait_for_timeout(1500)
 
-        print(f"  [{tag}][9] Agree and generate...")
+        log(tag, "[9] Agree and generate...")
         await page.locator("text=同意协议并生成").first.click(timeout=ACTION_TIMEOUT)
         await page.wait_for_timeout(2000)
 
-        print(f"  [{tag}][10] Extracting API key...")
+        log(tag, "[10] Extracting API key...")
         key_el = page.locator("[class*='value']").filter(has_text="sk-").first
         if not await key_el.is_visible(timeout=5000):
             content = await page.content()
             match = re.search(r"sk-[a-zA-Z0-9]{16,}", content)
             if match:
                 return match.group(0)
-            # Screenshot for debugging
             try:
                 await page.screenshot(path=str(Path(__file__).parent / f"iflow_key_fail_{tag}.png"))
-                print(f"  [{tag}][!] Screenshot saved: iflow_key_fail_{tag}.png")
+                log(tag, f"[!] Screenshot saved: iflow_key_fail_{tag}.png")
             except Exception:
                 pass
             return None
         api_key = (await key_el.text_content()).strip()
         return api_key if api_key.startswith("sk-") else None
     except Exception as e:
-        print(f"  [{tag}][!] Create key error: {e}")
+        log(tag, f"[!] Create key error: {e}")
         try:
             pages = context.pages
             if pages:
                 await pages[-1].screenshot(path=str(Path(__file__).parent / f"iflow_key_fail_{tag}.png"))
-                print(f"  [{tag}][!] Screenshot saved: iflow_key_fail_{tag}.png")
+                log(tag, f"[!] Screenshot saved: iflow_key_fail_{tag}.png")
         except Exception:
             pass
         return None
@@ -316,7 +320,7 @@ async def extract_oauth_tokens(context: BrowserContext, tag: str = "") -> dict |
             f"https://iflow.cn/oauth?loginMethod=phone&type=phone"
             f"&redirect={_quote(redirect_uri)}&state={state}&client_id={IFLOW_CLIENT_ID}"
         )
-        print(f"  [{tag}][OAuth] Starting token extraction...")
+        log(tag, "[OAuth] Starting token extraction...")
         await page.goto(auth_url, wait_until="networkidle", timeout=20000)
         await page.wait_for_timeout(2000)
 
@@ -333,7 +337,7 @@ async def extract_oauth_tokens(context: BrowserContext, tag: str = "") -> dict |
             return null;
         }""")
         if clicked:
-            print(f"  [{tag}][OAuth] Clicked account: {clicked}")
+            log(tag, f"[OAuth] Clicked account: {clicked}")
         await page.wait_for_timeout(3000)
         await page.close()
 
@@ -357,7 +361,7 @@ async def extract_oauth_tokens(context: BrowserContext, tag: str = "") -> dict |
             )
             tokens = resp.json()
             if not tokens.get("access_token"):
-                print(f"  [{tag}][OAuth] Token exchange failed: {tokens}")
+                log(tag, f"[OAuth] Token exchange failed: {tokens}")
                 return None
 
             info_resp = await client.get(f"{IFLOW_USERINFO_URL}?accessToken={tokens['access_token']}")
@@ -371,14 +375,14 @@ async def extract_oauth_tokens(context: BrowserContext, tag: str = "") -> dict |
             "email": info.get("email") or info.get("phone", ""),
             "userName": info.get("userName", ""),
         }
-        print(f"  [{tag}][OAuth] Got refresh_token + apiKey for {result['userName']}")
+        log(tag, f"[OAuth] Got refresh_token + apiKey for {result['userName']}")
         return result
 
     except asyncio.TimeoutError:
-        print(f"  [{tag}][OAuth] Timeout waiting for OAuth code")
+        log(tag, "[OAuth] Timeout waiting for OAuth code")
         return None
     except Exception as e:
-        print(f"  [{tag}][OAuth] Error: {e}")
+        log(tag, f"[OAuth] Error: {e}")
         return None
     finally:
         await runner.cleanup()
@@ -393,22 +397,22 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
     Returns True if authorization succeeded.
     """
     if not _qwen_auth:
-        print(f"  [{tag}][QWEN] qwen_auth module not available, skipping")
+        log(tag, "[QWEN] qwen_auth module not available, skipping")
         return False
 
     # Step 1: Start device flow
-    print(f"  [{tag}][QWEN][1] Starting device flow...")
+    log(tag, "[QWEN][1] Starting device flow...")
     try:
         flow = await _qwen_auth.start_device_flow()
     except Exception as e:
-        print(f"  [{tag}][QWEN][!] Device flow start failed: {e}")
+        log(tag, f"[QWEN][!] Device flow start failed: {e}")
         return False
 
     device_code = flow["device_code"]
     verifier = flow["verifier"]
     interval = flow.get("interval", 5)
     verify_url = flow.get("verification_uri_complete") or flow.get("verification_uri", "")
-    print(f"  [{tag}][QWEN][2] Got user_code={flow.get('user_code')}, opening {verify_url[:60]}...")
+    log(tag, f"[QWEN][2] Got user_code={flow.get('user_code')}, opening {verify_url[:60]}...")
 
     # Step 2: Start token polling in background
     poll_task = asyncio.create_task(
@@ -423,7 +427,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
         await page.wait_for_timeout(3000)
 
         # Click "Continue with Google"
-        print(f"  [{tag}][QWEN][3] Clicking Continue with Google...")
+        log(tag, "[QWEN][3] Clicking Continue with Google...")
         google_clicked = False
         for sel in [
             "text=Continue with Google",
@@ -441,7 +445,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
                 continue
 
         if not google_clicked:
-            print(f"  [{tag}][QWEN][!] Could not find Google login button")
+            log(tag, "[QWEN][!] Could not find Google login button")
             await page.close()
             poll_task.cancel()
             return False
@@ -454,7 +458,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
         await page.wait_for_timeout(2000)
 
         # Click on the Google account (already logged in)
-        print(f"  [{tag}][QWEN][4] Selecting Google account...")
+        log(tag, "[QWEN][4] Selecting Google account...")
         account_clicked = False
 
         # First wait for the account chooser to appear
@@ -466,11 +470,11 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
                 "li.MnOvKe, div.MnOvKe"
             ).first.wait_for(state="visible", timeout=15000)
         except Exception:
-            print(f"  [{tag}][QWEN][4] Account chooser not found, taking screenshot...")
+            log(tag, "[QWEN][4] Account chooser not found, taking screenshot...")
             try:
                 url = page.url
                 title = await page.title()
-                print(f"  [{tag}][QWEN][4] Current page: {url} — {title}")
+                log(tag, f"[QWEN][4] Current page: {url} — {title}")
             except Exception:
                 pass
 
@@ -496,7 +500,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
                 if await el.is_visible(timeout=3000):
                     await el.click()
                     account_clicked = True
-                    print(f"  [{tag}][QWEN][4] Clicked account via selector: {sel}")
+                    log(tag, f"[QWEN][4] Clicked account via selector: {sel}")
                     break
             except Exception:
                 continue
@@ -519,17 +523,17 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
                 }""", email)
                 if clicked_text:
                     account_clicked = True
-                    print(f"  [{tag}][QWEN][4] JS-clicked account: {clicked_text}")
+                    log(tag, f"[QWEN][4] JS-clicked account: {clicked_text}")
             except Exception:
                 pass
 
         if not account_clicked:
-            print(f"  [{tag}][QWEN][!] Could not select Google account")
+            log(tag, "[QWEN][!] Could not select Google account")
             try:
                 url = page.url
                 content = await page.content()
-                print(f"  [{tag}][QWEN][!] Page URL: {url}")
-                print(f"  [{tag}][QWEN][!] Page snippet: {content[:500]}")
+                log(tag, f"[QWEN][!] Page URL: {url}")
+                log(tag, f"[QWEN][!] Page snippet: {content[:500]}")
             except Exception:
                 pass
             await page.close()
@@ -544,7 +548,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
         await page.wait_for_timeout(3000)
 
         # Click Continue/Allow on Google consent (may appear multiple times)
-        print(f"  [{tag}][QWEN][5] Google consent...")
+        log(tag, "[QWEN][5] Google consent...")
         for _ in range(3):
             clicked = False
             for t in ["Continue", "Tiếp tục", "Allow", "Cho phép"]:
@@ -554,7 +558,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
                         await b.click()
                         await page.wait_for_timeout(3000)
                         clicked = True
-                        print(f"  [{tag}][QWEN][5] Clicked: {t}")
+                        log(tag, f"[QWEN][5] Clicked: {t}")
                         break
                 except Exception:
                     continue
@@ -570,7 +574,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
         await page.wait_for_timeout(2000)
 
         # Click Confirm on Qwen authorization page (may appear multiple times)
-        print(f"  [{tag}][QWEN][6] Qwen confirm...")
+        log(tag, "[QWEN][6] Qwen confirm...")
         await page.wait_for_timeout(3000)
         for attempt in range(4):
             clicked = False
@@ -589,7 +593,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
                         await btn.click()
                         await page.wait_for_timeout(3000)
                         clicked = True
-                        print(f"  [{tag}][QWEN][6] attempt {attempt+1} clicked via: {sel}")
+                        log(tag, f"[QWEN][6] attempt {attempt+1} clicked via: {sel}")
                         break
                 except Exception:
                     continue
@@ -597,7 +601,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
                 # No confirm button found, log and stop
                 try:
                     url = page.url
-                    print(f"  [{tag}][QWEN][6] attempt {attempt+1} - no confirm btn, url={url}")
+                    log(tag, f"[QWEN][6] attempt {attempt+1} - no confirm btn, url={url}")
                     await page.screenshot(path=str(Path(__file__).parent / f"qwen_confirm_{tag}_{attempt}.png"))
                 except Exception:
                     pass
@@ -610,22 +614,22 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
             await page.wait_for_timeout(2000)
 
         # Wait for success message
-        print(f"  [{tag}][QWEN][7] Waiting for success...")
+        log(tag, "[QWEN][7] Waiting for success...")
         try:
             await page.locator("text=Authentication successful").wait_for(timeout=15000)
             authorized = True
-            print(f"  [{tag}][QWEN][OK] Browser authorization successful")
+            log(tag, "[QWEN][OK] Browser authorization successful")
         except Exception:
             # Check if page shows success in any form
             content = await page.content()
             if "Authentication successful" in content or "success" in content.lower():
                 authorized = True
-                print(f"  [{tag}][QWEN][OK] Authorization detected in page content")
+                log(tag, "[QWEN][OK] Authorization detected in page content")
             else:
-                print(f"  [{tag}][QWEN][!] Did not see success message")
+                log(tag, "[QWEN][!] Did not see success message")
 
     except Exception as e:
-        print(f"  [{tag}][QWEN][!] Browser automation error: {e}")
+        log(tag, f"[QWEN][!] Browser automation error: {e}")
     finally:
         try:
             await page.close()
@@ -634,7 +638,7 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
 
     # Step 4: Wait for token from polling
     if authorized:
-        print(f"  [{tag}][QWEN][8] Waiting for token...")
+        log(tag, "[QWEN][8] Waiting for token...")
         try:
             token = await asyncio.wait_for(poll_task, timeout=30)
             expires_in = token.get("expires_in", 3600)
@@ -660,12 +664,12 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
                         qwen_email=email,
                         pair_email=email,
                     )
-                print(f"  [{tag}][QWEN][OK] Token saved, account added to store")
+                log(tag, "[QWEN][OK] Token saved, account added to store")
             return True
         except asyncio.TimeoutError:
-            print(f"  [{tag}][QWEN][!] Token poll timed out after browser success")
+            log(tag, "[QWEN][!] Token poll timed out after browser success")
         except Exception as e:
-            print(f"  [{tag}][QWEN][!] Token poll error: {e}")
+            log(tag, f"[QWEN][!] Token poll error: {e}")
     else:
         poll_task.cancel()
 
@@ -702,7 +706,7 @@ async def process_account(browser: Browser, email: str, password: str, tag: str 
         if api_key:
             result["api_key"] = api_key
             result["status"] = "success"
-            print(f"  [{tag}][OK] {api_key[:16]}...")
+            log(tag, f"[OK] {api_key[:16]}...")
 
             # Extract OAuth tokens (refresh_token) using the live session
             oauth = await extract_oauth_tokens(context, tag)
@@ -716,15 +720,15 @@ async def process_account(browser: Browser, email: str, password: str, tag: str 
                 acc = _store.auto_add_account_with_proxy(api_key, email.split("@")[0])
                 if acc:
                     proxy_info = acc.get("proxy", "direct")
-                    print(f"  [{tag}][AUTO] Added to accounts → {proxy_info}")
+                    log(tag, f"[AUTO] Added to accounts → {proxy_info}")
                     # Save refresh_token into the account
                     if oauth and oauth.get("refresh_token"):
                         _store.update_account(acc["id"], refresh_token=oauth["refresh_token"],
                                               access_token=oauth["access_token"],
                                               expiry_date=oauth["expiry_date"])
-                        print(f"  [{tag}][AUTO] Saved refresh_token for {acc['name']}")
+                        log(tag, f"[AUTO] Saved refresh_token for {acc['name']}")
                 else:
-                    print(f"  [{tag}][AUTO] Added to accounts (no proxy available)")
+                    log(tag, "[AUTO] Added to accounts (no proxy available)")
 
             # Qwen OAuth: reuse Google session to authorize Qwen
             if _qwen_auth:
@@ -775,7 +779,7 @@ async def worker(worker_id: str, queue: asyncio.Queue, playwright, proxy_cfg: di
         await browser.close()
 
         status = "OK" if result["status"] == "success" else f"FAIL: {result['error']}"
-        print(f"  [{tag}] {status}")
+        log(tag, status)
 
         queue.task_done()
         await asyncio.sleep(2)
