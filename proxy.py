@@ -667,7 +667,7 @@ def anthropic_to_openai(body: dict, model: str, provider: str = "iflow") -> dict
             "enable_thinking": store.get_enable_thinking(),
         }
         if "max_tokens" in body:
-            out["max_new_tokens"] = body["max_tokens"]
+            out["max_new_tokens"] = max(body["max_tokens"], 8000)
         else:
             out["max_new_tokens"] = 32000
         if has_tools:
