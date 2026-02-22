@@ -800,6 +800,8 @@ async def stream_anthropic_sse(
             stop_reason = "tool_use"
         elif finish == "stop":
             stop_reason = "end_turn"
+        elif finish == "length":
+            stop_reason = "max_tokens"
 
         # Text content (some models use reasoning_content instead of content)
         text_content = delta.get("content") or delta.get("reasoning_content") or ""
@@ -893,6 +895,9 @@ async def stream_anthropic_sse(
     })
 
     yield sse("message_stop", {"type": "message_stop"})
+
+    if usage_out is not None:
+        usage_out["stop_reason"] = stop_reason
 
 
 # ============================================================
@@ -1213,6 +1218,8 @@ async def messages(request: Request):
                             return
                         async for chunk in stream_anthropic_sse(resp.aiter_lines(), cur_model, msg_id, _usage):
                             yield chunk
+                    if _dbg:
+                        logger.info(f"[DEBUG] ← {cur_model} | stream=True | usage={_usage}")
                     store.finalize_request(cur_id, cur_name, cur_model, "success", preview, int((time.time() - t0) * 1000), _usage.get("prompt_tokens", 0), _usage.get("completion_tokens", 0))
                     return
                 except httpx.ReadTimeout:
