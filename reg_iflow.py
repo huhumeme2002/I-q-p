@@ -41,9 +41,8 @@ try:
 except ImportError:
     _stealth_async = None
 
-# Thread-safe lock for file writes
-import threading
-_file_lock = threading.Lock()
+# Async lock for file writes (all callers are in the same event loop)
+_file_lock = asyncio.Lock()
 
 
 # ── Helpers ──
@@ -73,8 +72,8 @@ def load_proxies() -> list[dict]:
     return []
 
 
-def save_result(result: dict):
-    with _file_lock:
+async def save_result(result: dict):
+    async with _file_lock:
         results = []
         if OUTPUT_FILE.exists():
             try:
@@ -113,7 +112,7 @@ async def google_sign_in(context: BrowserContext, email: str, password: str, tag
 
         print(f"  [{tag}][2] Clicking Sign in with Google...")
         google_page = None
-        popup_future = asyncio.get_event_loop().create_future()
+        popup_future = asyncio.get_running_loop().create_future()
 
         def on_popup(new_page):
             if not popup_future.done():
@@ -261,10 +260,13 @@ async def create_api_key(context: BrowserContext, tag: str = "") -> str | None:
         return None
 
 
-IFLOW_CLIENT_ID     = "10009311001"
-IFLOW_CLIENT_SECRET = "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW"
-IFLOW_TOKEN_URL     = "https://iflow.cn/oauth/token"
-IFLOW_USERINFO_URL  = "https://iflow.cn/api/oauth/getUserInfo"
+# Import OAuth credentials from iflow_auth to avoid duplication
+from iflow_auth import (
+    IFLOW_CLIENT_ID,
+    IFLOW_CLIENT_SECRET,
+    IFLOW_TOKEN_URL,
+    IFLOW_USERINFO_URL,
+)
 
 
 async def extract_oauth_tokens(context: BrowserContext, tag: str = "") -> dict | None:
@@ -502,20 +504,19 @@ async def authorize_qwen(context: BrowserContext, email: str, tag: str = "") -> 
         if not account_clicked:
             # Last resort: JS click on any element containing the email
             try:
-                clicked_text = await page.evaluate(f"""() => {{
-                    const email = '{email}';
+                clicked_text = await page.evaluate("""(email) => {
                     const all = document.querySelectorAll('li, div[role="button"], div[tabindex]');
-                    for (const el of all) {{
-                        if (el.innerText && el.innerText.includes(email)) {{
+                    for (const el of all) {
+                        if (el.innerText && el.innerText.includes(email)) {
                             el.click();
                             return el.innerText.trim().slice(0, 50);
-                        }}
-                    }}
+                        }
+                    }
                     // fallback: click first li or div[role=button] in account chooser
                     const first = document.querySelector('li[data-authuser], li.MnOvKe, div[data-authuser]');
-                    if (first) {{ first.click(); return 'first-item'; }}
+                    if (first) { first.click(); return 'first-item'; }
                     return null;
-                }}""")
+                }""", email)
                 if clicked_text:
                     account_clicked = True
                     print(f"  [{tag}][QWEN][4] JS-clicked account: {clicked_text}")
@@ -770,7 +771,7 @@ async def worker(worker_id: str, queue: asyncio.Queue, playwright, proxy_cfg: di
             ],
         )
         result = await process_account(browser, email, password, tag)
-        save_result(result)
+        await save_result(result)
         await browser.close()
 
         status = "OK" if result["status"] == "success" else f"FAIL: {result['error']}"
@@ -848,6 +849,21 @@ async def main():
     if _store:
         _store.clear_reg_accounts()
         _store.set_reg_status(False)
+
+    # Remove accounts.txt to avoid leaving plaintext passwords on disk
+    try:
+        ACCOUNTS_FILE.unlink()
+        print(f"[*] Deleted {ACCOUNTS_FILE} (plaintext passwords removed)")
+    except Exception as exc:
+        print(f"[!] Could not delete {ACCOUNTS_FILE}: {exc}")
+
+    # Remove reg_proxies.json to avoid leaving proxy credentials on disk
+    try:
+        if PROXIES_FILE.exists():
+            PROXIES_FILE.unlink()
+            print(f"[*] Deleted {PROXIES_FILE} (proxy credentials removed)")
+    except Exception as exc:
+        print(f"[!] Could not delete {PROXIES_FILE}: {exc}")
 
 
 if __name__ == "__main__":

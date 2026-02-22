@@ -5,6 +5,8 @@ import time
 import asyncio
 import hashlib
 import base64
+import copy
+from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -17,12 +19,29 @@ import store
 import iflow_auth
 import qwen_auth
 
+# ============================================================
+# LOGGING CONFIGURATION
+# ============================================================
+def _setup_logging():
+    """Configure logging with a StreamHandler if no handlers are set."""
+    root = logging.getLogger()
+    if not root.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+
+_setup_logging()
+
 logger = logging.getLogger("proxy")
 
 # ============================================================
-# IMAGE DESCRIPTION CACHE (in-memory, max 200 entries)
+# IMAGE DESCRIPTION CACHE (in-memory LRU, max 200 entries)
 # ============================================================
-_vision_cache: dict[str, str] = {}
+_vision_cache: OrderedDict[str, str] = OrderedDict()
 _VISION_CACHE_MAX = 200
 
 def _cache_key(image_source: dict) -> str | None:
@@ -31,7 +50,7 @@ def _cache_key(image_source: dict) -> str | None:
     if src_type == "base64":
         data = image_source.get("data", "")
         if data:
-            return hashlib.md5(data[:500].encode()).hexdigest()
+            return hashlib.sha256(data.encode()).hexdigest()
     elif src_type == "url":
         url = image_source.get("url", "")
         if url and not url.startswith("data:"):
@@ -45,6 +64,10 @@ store.init_data()
 # ============================================================
 _http_client: httpx.AsyncClient | None = None
 
+# Per-proxy persistent clients (SOCKS5 proxies don't support HTTP/2)
+# Key: proxy URL string, Value: AsyncClient
+_proxy_clients: dict[str, httpx.AsyncClient] = {}
+
 _auto_refresh: iflow_auth.IFlowAutoRefresh | None = None
 _qwen_auto_refresh: qwen_auth.QwenAutoRefresh | None = None
 _proxy_checker_task: asyncio.Task | None = None
@@ -52,42 +75,69 @@ _proxy_checker_task: asyncio.Task | None = None
 # In-memory proxy status cache: proxy_id -> bool (True=alive, False=dead)
 _proxy_status: dict[str, bool] = {}
 
+# In-memory admin session tokens: token -> expiry_timestamp
+# Tokens are random UUIDs, NOT the password itself
+_admin_sessions: dict[str, float] = {}
+_SESSION_TTL = 86400.0  # 24 hours
+
+
+def _purge_expired_sessions() -> None:
+    """Remove expired session tokens from _admin_sessions."""
+    now = time.time()
+    expired = [t for t, exp in _admin_sessions.items() if exp <= now]
+    for t in expired:
+        del _admin_sessions[t]
+
+# CSRF tokens: deque of (token, expiry) tuples, insertion order for oldest-first eviction;
+# _csrf_tokens_set provides O(1) membership checks.
+_CSRF_TTL = 86400.0  # 24 hours
+_csrf_tokens: deque[tuple[str, float]] = deque()
+_csrf_tokens_set: set[str] = set()
+
+
+# Reliable endpoints for proxy health checks (tried in order)
+_PROXY_CHECK_URLS = [
+    "https://1.1.1.1",           # Cloudflare — fast, reliable
+    "https://www.google.com",    # fallback
+]
+
 
 async def _check_proxy_alive(proxy_str: str) -> bool:
-    """Test if a proxy is reachable."""
-    try:
-        async with httpx.AsyncClient(
-            proxy=proxy_str,
-            timeout=httpx.Timeout(connect=8.0, read=10.0, write=5.0, pool=5.0),
-            http2=False,
-        ) as client:
-            resp = await client.get("https://httpbin.org/ip", headers={"User-Agent": "Mozilla/5.0"})
-            return resp.status_code == 200
-    except Exception:
-        return False
+    """Test if a proxy is reachable by connecting to a reliable endpoint."""
+    for url in _PROXY_CHECK_URLS:
+        try:
+            async with httpx.AsyncClient(
+                proxy=proxy_str,
+                timeout=httpx.Timeout(connect=8.0, read=10.0, write=5.0, pool=5.0),
+                http2=False,
+            ) as client:
+                resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                return resp.status_code < 500
+        except Exception:
+            continue
+    return False
 
 
 async def _proxy_health_loop(interval: int = 600):
     """Background task: check all pool proxies every `interval` seconds, reassign if dead."""
-    import logging as _log
-    logger = _log.getLogger("proxy.health")
+    health_logger = logging.getLogger("proxy.health")
     while True:
         await asyncio.sleep(interval)
         pool = store.get_proxy_pool()
         if not pool:
             continue
-        logger.info(f"[ProxyHealth] Checking {len(pool)} proxies...")
+        health_logger.info(f"[ProxyHealth] Checking {len(pool)} proxies...")
         for p in pool:
             proxy_str = store._build_proxy_str(p)
             alive = await _check_proxy_alive(proxy_str)
             _proxy_status[p["id"]] = alive
             if not alive:
-                logger.warning(f"[ProxyHealth] Dead proxy {p['host']}:{p['port']} — reassigning accounts")
+                health_logger.warning(f"[ProxyHealth] Dead proxy {p['host']}:{p['port']} — reassigning accounts")
                 accounts = store.get_accounts()
                 for acc in accounts:
                     if acc.get("proxy", "").strip() == proxy_str:
                         store.reassign_account_proxy(acc["id"])
-        logger.info("[ProxyHealth] Done.")
+        health_logger.info("[ProxyHealth] Done.")
 
 
 def _is_proxy_error(exc: Exception) -> bool:
@@ -142,6 +192,7 @@ async def lifespan(app: FastAPI):
                 provider="qwen",
                 qwen_email=email,
                 upstream_url=upstream,
+                resource_url=resource_url,
             )
             print(f"  ✅ Auto-imported Qwen account: {email}")
 
@@ -165,6 +216,8 @@ async def lifespan(app: FastAPI):
     _qwen_auto_refresh.stop()
     _proxy_checker_task.cancel()
     await _http_client.aclose()
+    for pc in _proxy_clients.values():
+        await pc.aclose()
 
 
 app = FastAPI(title="iFlow Proxy for Claude Code", version="1.0.0", lifespan=lifespan)
@@ -180,7 +233,7 @@ PROXY_PORT = store.get_settings().get("port", 8083)
 # ADMIN AUTH MIDDLEWARE
 # ============================================================
 
-_ADMIN_PATHS = ("/admin", "/api/")
+_ADMIN_PATHS = ("/admin", "/api/", "/debug/")
 
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
@@ -191,22 +244,36 @@ async def admin_auth_middleware(request: Request, call_next):
 
     pw = store.get_admin_password()
     if not pw:
+        # No password set — still enforce CSRF for mutating API requests
+        if _should_check_csrf(request):
+            if not _csrf_valid(request):
+                return JSONResponse({"detail": "CSRF token missing or invalid"}, status_code=403)
         return await call_next(request)
 
-    # Check Authorization header (Basic auth)
+    # Check Authorization header (Basic auth) — hash and compare
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Basic "):
         try:
             decoded = base64.b64decode(auth[6:]).decode("utf-8")
             _, _, provided = decoded.partition(":")
-            if provided == pw:
+            if store.verify_admin_password(provided):
+                if _should_check_csrf(request) and not _csrf_valid(request):
+                    return JSONResponse({"detail": "CSRF token missing or invalid"}, status_code=403)
                 return await call_next(request)
         except Exception:
             pass
 
-    # Check session cookie
-    if request.cookies.get("admin_session") == pw:
-        return await call_next(request)
+    # Check session cookie — validate token against in-memory store
+    _purge_expired_sessions()
+    token = request.cookies.get("admin_session", "")
+    if token:
+        expiry = _admin_sessions.get(token, 0)
+        if expiry > time.time():
+            if _should_check_csrf(request) and not _csrf_valid(request):
+                return JSONResponse({"detail": "CSRF token missing or invalid"}, status_code=403)
+            return await call_next(request)
+        elif token in _admin_sessions:
+            del _admin_sessions[token]  # expired, clean up
 
     # Return 401 with WWW-Authenticate to trigger browser login dialog
     return Response(
@@ -214,6 +281,20 @@ async def admin_auth_middleware(request: Request, call_next):
         status_code=401,
         headers={"WWW-Authenticate": 'Basic realm="iFlow Admin"'},
     )
+
+
+def _should_check_csrf(request: Request) -> bool:
+    """Return True for mutating API requests that need CSRF protection."""
+    return (
+        request.method in ("POST", "PUT", "DELETE", "PATCH")
+        and request.url.path.startswith("/api/")
+    )
+
+
+def _csrf_valid(request: Request) -> bool:
+    """Return True if the request carries a valid, non-expired CSRF token."""
+    token = request.headers.get("X-CSRF-Token", "")
+    return bool(token) and token in _csrf_tokens_set
 
 
 # ============================================================
@@ -248,9 +329,10 @@ async def describe_image_async(image_source: dict, vision_cfg: dict) -> str:
     """
     import base64 as _b64
 
-    # Check cache first
+    # Check cache first (LRU: move to end on hit)
     ck = _cache_key(image_source)
     if ck and ck in _vision_cache:
+        _vision_cache.move_to_end(ck)
         return _vision_cache[ck]
 
     # Resolve API key and upstream
@@ -353,11 +435,10 @@ async def describe_image_async(image_source: dict, vision_cfg: dict) -> str:
     except Exception as exc:
         result = f"[Image: vision error - {str(exc)[:80]}]"
 
-    # Store in cache (evict oldest if full)
+    # Store in cache (LRU eviction: popitem(last=False) removes least recently used)
     if ck and not result.startswith("[Image: vision error"):
         if len(_vision_cache) >= _VISION_CACHE_MAX:
-            oldest = next(iter(_vision_cache))
-            del _vision_cache[oldest]
+            _vision_cache.popitem(last=False)  # remove LRU item
         _vision_cache[ck] = result
 
     return result
@@ -384,14 +465,18 @@ async def process_vision_in_messages(body: dict) -> dict:
         return body
 
     # Only deepcopy when we actually need to mutate the body
-    import copy
     body = copy.deepcopy(body)
 
-    # Describe all images in parallel
-    descriptions = await asyncio.gather(
+    # Describe all images in parallel — use return_exceptions=True so one failure
+    # doesn't abort the entire request
+    raw_results = await asyncio.gather(
         *[describe_image_async(source, vision_cfg) for _, _, source in image_tasks],
-        return_exceptions=False,
+        return_exceptions=True,
     )
+    descriptions = [
+        r if isinstance(r, str) else f"[Image: description failed — {str(r)[:60]}]"
+        for r in raw_results
+    ]
 
     # Replace image blocks with descriptions (in reverse order to preserve indices)
     desc_map: dict[tuple[int, int], str] = {
@@ -835,6 +920,62 @@ async def health():
     }
 
 
+def _estimate_tokens(body: dict) -> int:
+    """Estimate token count for an Anthropic-format request body.
+
+    Heuristics:
+    - Text content: ~3.5 chars/token (better than 4 for English/code)
+    - Tool definitions: name + description + parameters JSON
+    - base64 image blocks: ~1600 tokens (fixed cost)
+    - URL image blocks: ~800 tokens (fixed cost)
+    """
+    CHARS_PER_TOKEN = 3.5
+    total = 0
+
+    def _text_tokens(text: str) -> int:
+        return max(1, int(len(text) / CHARS_PER_TOKEN))
+
+    def _content_tokens(content) -> int:
+        if isinstance(content, str):
+            return _text_tokens(content)
+        if isinstance(content, list):
+            t = 0
+            for block in content:
+                btype = block.get("type", "")
+                if btype == "text":
+                    t += _text_tokens(block.get("text", ""))
+                elif btype == "image":
+                    src = block.get("source", {})
+                    if src.get("type") == "base64":
+                        t += 1600
+                    else:
+                        t += 800
+                elif btype == "tool_result":
+                    t += _content_tokens(block.get("content", ""))
+                elif btype == "tool_use":
+                    t += _text_tokens(block.get("name", ""))
+                    t += _text_tokens(json.dumps(block.get("input", {})))
+            return t
+        return _text_tokens(str(content)) if content else 0
+
+    # System prompt
+    if "system" in body:
+        total += _content_tokens(body["system"])
+
+    # Messages
+    for msg in body.get("messages", []):
+        total += _content_tokens(msg.get("content", ""))
+
+    # Tool definitions
+    for tool in body.get("tools", []):
+        total += _text_tokens(tool.get("name", ""))
+        total += _text_tokens(tool.get("description", ""))
+        params = tool.get("input_schema") or tool.get("parameters", {})
+        total += _text_tokens(json.dumps(params))
+
+    return max(1, total)
+
+
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(request: Request):
     try:
@@ -842,16 +983,7 @@ async def count_tokens(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    total_chars = 0
-    if "system" in body:
-        total_chars += len(str(body["system"]))
-    for msg in body.get("messages", []):
-        total_chars += len(str(msg.get("content", "")))
-    for tool in body.get("tools", []):
-        total_chars += len(json.dumps(tool))
-
-    estimated = max(1, total_chars // 4)
-    return JSONResponse({"input_tokens": estimated})
+    return JSONResponse({"input_tokens": _estimate_tokens(body)})
 
 
 @app.get("/v1/models")
@@ -872,6 +1004,50 @@ def _is_retryable(status: int) -> bool:
     return status == 429 or status >= 500
 
 
+async def _try_refresh_qwen(acc: dict) -> dict | None:
+    """Force-refresh Qwen token on 401, return updated headers or None.
+    Auto-disables account if refresh fails."""
+    email = acc.get("qwen_email", "")
+    if not email:
+        store.disable_account(acc["id"])
+        logger.warning(f"Auto-disabled account '{acc['name']}': no email for refresh")
+        return None
+    try:
+        creds = qwen_auth.read_qwen_creds(email)
+        rt = creds.get("refresh_token")
+        if not rt:
+            store.disable_account(acc["id"])
+            logger.warning(f"Auto-disabled account '{acc['name']}': no refresh_token")
+            return None
+        new_tok = await qwen_auth.refresh_qwen_token(rt)
+        new_token = new_tok["access_token"]
+        creds["access_token"] = new_token
+        creds["refresh_token"] = new_tok.get("refresh_token", rt)
+        creds["expiry_date"] = int(time.time() * 1000) + new_tok.get("expires_in", 21600) * 1000
+        if "resource_url" in new_tok:
+            creds["resource_url"] = new_tok["resource_url"]
+        qwen_auth.write_qwen_creds(email, creds)
+        store.update_account(acc["id"], api_key=new_token)
+        acc["api_key"] = new_token
+        logger.info(f"Force-refreshed Qwen token for {email} after 401")
+        return store.build_headers(acc)
+    except Exception as e:
+        logger.error(f"Force-refresh failed for {email}: {e}")
+        store.disable_account(acc["id"])
+        logger.warning(f"Auto-disabled account '{acc['name']}': refresh failed")
+        return None
+
+
+def _build_openai_request(body: dict, model: str, provider: str) -> dict:
+    """Build the OpenAI-format request body for the given account provider."""
+    return anthropic_to_openai(body, model, provider=provider)
+
+
+def _parse_openai_response(data: dict, model: str) -> dict:
+    """Convert an OpenAI-format response dict to Anthropic format."""
+    return openai_to_anthropic(data, model)
+
+
 @app.post("/v1/messages")
 async def messages(request: Request):
     try:
@@ -879,7 +1055,6 @@ async def messages(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    model = body.get("model", store.get_default_model())
     is_stream = body.get("stream", False)
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 
@@ -889,52 +1064,6 @@ async def messages(request: Request):
             status_code=503,
             detail="No active accounts. Add an API key at /admin"
         )
-
-    provider = account.get("provider", "iflow")
-    if provider == "qwen":
-        upstream_url = store.get_qwen_upstream(account)
-    else:
-        upstream_url = account.get("upstream_url") or store.get_upstream_url()
-    headers = store.build_headers(account)
-
-    async def _try_refresh_qwen(acc: dict) -> dict | None:
-        """Force-refresh Qwen token on 401, return updated headers or None.
-        Auto-disables account if refresh fails."""
-        email = acc.get("qwen_email", "")
-        if not email:
-            store.disable_account(acc["id"])
-            import logging as _log
-            _log.getLogger("proxy").warning(f"Auto-disabled account '{acc['name']}': no email for refresh")
-            return None
-        try:
-            creds = qwen_auth.read_qwen_creds(email)
-            rt = creds.get("refresh_token")
-            if not rt:
-                store.disable_account(acc["id"])
-                import logging as _log
-                _log.getLogger("proxy").warning(f"Auto-disabled account '{acc['name']}': no refresh_token")
-                return None
-            new_tok = await qwen_auth.refresh_qwen_token(rt)
-            new_token = new_tok["access_token"]
-            creds["access_token"] = new_token
-            creds["refresh_token"] = new_tok.get("refresh_token", rt)
-            import time as _t
-            creds["expiry_date"] = int(_t.time() * 1000) + new_tok.get("expires_in", 21600) * 1000
-            if "resource_url" in new_tok:
-                creds["resource_url"] = new_tok["resource_url"]
-            qwen_auth.write_qwen_creds(email, creds)
-            store.update_account(acc["id"], api_key=new_token)
-            acc["api_key"] = new_token
-            import logging as _log
-            _log.getLogger("proxy").info(f"Force-refreshed Qwen token for {email} after 401")
-            return store.build_headers(acc)
-        except Exception as e:
-            import logging as _log
-            _log.getLogger("proxy").error(f"Force-refresh failed for {email}: {e}")
-            # Auto-disable account on refresh failure
-            store.disable_account(acc["id"])
-            _log.getLogger("proxy").warning(f"Auto-disabled account '{acc['name']}': refresh failed")
-            return None
 
     # Vision fallback: replace image blocks with text descriptions
     body = await process_vision_in_messages(body)
@@ -949,7 +1078,7 @@ async def messages(request: Request):
 
     if is_stream:
         async def gen():
-            nonlocal account, provider, upstream_url, headers
+            nonlocal account
             _usage = {}
             attempt = 0
             while attempt < MAX_RETRIES:
@@ -965,13 +1094,18 @@ async def messages(request: Request):
                 cur_name = cur_account["name"]
                 cur_proxy = cur_account.get("proxy", "").strip()
                 cur_model = (cur_account.get("qwen_model") or store.get_qwen_default_model()) if cur_provider == "qwen" else store.get_default_model()
-                cur_body = anthropic_to_openai(body, cur_model, provider=cur_provider)
-                store.inc_account_request(cur_id)
+                cur_body = _build_openai_request(body, cur_model, cur_provider)
 
-                client = httpx.AsyncClient(proxy=cur_proxy, timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0), http2=False) if cur_proxy else None
-                http = client if client else _http_client
+                if cur_proxy and cur_proxy not in _proxy_clients:
+                    _proxy_clients[cur_proxy] = httpx.AsyncClient(
+                        proxy=cur_proxy,
+                        timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0),
+                        http2=False,
+                    )
+                http = _proxy_clients[cur_proxy] if cur_proxy else _http_client
                 try:
                     async with http.stream("POST", cur_upstream, headers=cur_headers, json=cur_body) as resp:
+                        store.inc_account_request(cur_id)
                         if resp.status_code == 401 and cur_provider == "qwen":
                             err = (await resp.aread()).decode(errors="replace")
                             new_headers = await _try_refresh_qwen(cur_account)
@@ -979,44 +1113,37 @@ async def messages(request: Request):
                                 async with http.stream("POST", cur_upstream, headers=new_headers, json=cur_body) as resp2:
                                     if resp2.status_code != 200:
                                         err2 = (await resp2.aread()).decode(errors="replace")
-                                        store.inc_account_error(cur_id)
-                                        store.add_log(cur_name, model, "error", f"HTTP {resp2.status_code}: {err2[:80]}", int((time.time() - t0) * 1000))
+                                        store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP {resp2.status_code}: {err2[:80]}", int((time.time() - t0) * 1000), is_error=True)
                                         yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': err2}})}\n\n"
                                         return
-                                    async for chunk in stream_anthropic_sse(resp2.aiter_lines(), model, msg_id, _usage):
+                                    async for chunk in stream_anthropic_sse(resp2.aiter_lines(), cur_model, msg_id, _usage):
                                         yield chunk
-                                store.inc_account_tokens(cur_id, _usage.get("prompt_tokens", 0), _usage.get("completion_tokens", 0))
-                                store.add_log(cur_name, model, "success", preview, int((time.time() - t0) * 1000))
+                                store.finalize_request(cur_id, cur_name, cur_model, "success", preview, int((time.time() - t0) * 1000), _usage.get("prompt_tokens", 0), _usage.get("completion_tokens", 0))
                                 return
-                            store.inc_account_error(cur_id)
-                            store.add_log(cur_name, model, "error", f"HTTP 401: {err[:80]}", int((time.time() - t0) * 1000))
+                            store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP 401: {err[:80]}", int((time.time() - t0) * 1000), is_error=True)
                             yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': err}})}\n\n"
                             return
                         if resp.status_code == 401 and cur_provider != "qwen":
                             err = (await resp.aread()).decode(errors="replace")
-                            store.inc_account_error(cur_id)
                             store.disable_account(cur_id)
-                            store.add_log(cur_name, model, "error", f"HTTP 401 (auto-disabled): {err[:60]}", int((time.time() - t0) * 1000))
+                            store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP 401 (auto-disabled): {err[:60]}", int((time.time() - t0) * 1000), is_error=True)
                             yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': err}})}\n\n"
                             return
                         if resp.status_code != 200:
                             err = (await resp.aread()).decode(errors="replace")
-                            store.inc_account_error(cur_id)
-                            store.add_log(cur_name, model, "error", f"HTTP {resp.status_code}: {err[:80]}", int((time.time() - t0) * 1000))
+                            store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP {resp.status_code}: {err[:80]}", int((time.time() - t0) * 1000), is_error=True)
                             if _is_retryable(resp.status_code) and attempt < MAX_RETRIES:
                                 logger.warning(f"Retrying after HTTP {resp.status_code} (attempt {attempt}/{MAX_RETRIES})")
                                 await asyncio.sleep(1)
                                 continue
                             yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': err}})}\n\n"
                             return
-                        async for chunk in stream_anthropic_sse(resp.aiter_lines(), model, msg_id, _usage):
+                        async for chunk in stream_anthropic_sse(resp.aiter_lines(), cur_model, msg_id, _usage):
                             yield chunk
-                    store.inc_account_tokens(cur_id, _usage.get("prompt_tokens", 0), _usage.get("completion_tokens", 0))
-                    store.add_log(cur_name, model, "success", preview, int((time.time() - t0) * 1000))
+                    store.finalize_request(cur_id, cur_name, cur_model, "success", preview, int((time.time() - t0) * 1000), _usage.get("prompt_tokens", 0), _usage.get("completion_tokens", 0))
                     return
                 except httpx.ReadTimeout:
-                    store.inc_account_error(cur_id)
-                    store.add_log(cur_name, model, "error", "Timeout", int((time.time() - t0) * 1000))
+                    store.finalize_request(cur_id, cur_name, cur_model, "error", "Timeout", int((time.time() - t0) * 1000), is_error=True)
                     if attempt < MAX_RETRIES:
                         logger.warning(f"Retrying after timeout (attempt {attempt}/{MAX_RETRIES})")
                         await asyncio.sleep(1)
@@ -1024,21 +1151,17 @@ async def messages(request: Request):
                     yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'timeout', 'message': 'Upstream timeout'}})}\n\n"
                     return
                 except Exception as exc:
-                    store.inc_account_error(cur_id)
                     if _is_proxy_error(exc) and cur_proxy:
                         store.reassign_account_proxy(cur_id)
-                        store.add_log(cur_name, model, "error", f"Proxy dead, reassigned: {str(exc)[:60]}", int((time.time() - t0) * 1000))
+                        store.finalize_request(cur_id, cur_name, cur_model, "error", f"Proxy dead, reassigned: {str(exc)[:60]}", int((time.time() - t0) * 1000), is_error=True)
                     else:
-                        store.add_log(cur_name, model, "error", str(exc)[:80], int((time.time() - t0) * 1000))
+                        store.finalize_request(cur_id, cur_name, cur_model, "error", str(exc)[:80], int((time.time() - t0) * 1000), is_error=True)
                     if attempt < MAX_RETRIES:
                         logger.warning(f"Retrying after error: {exc} (attempt {attempt}/{MAX_RETRIES})")
                         await asyncio.sleep(1)
                         continue
                     yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'proxy_error', 'message': str(exc)}})}\n\n"
                     return
-                finally:
-                    if client:
-                        await client.aclose()
 
         return StreamingResponse(
             gen(),
@@ -1058,47 +1181,53 @@ async def messages(request: Request):
         cur_name = cur_account["name"]
         cur_proxy = cur_account.get("proxy", "").strip()
         cur_model = (cur_account.get("qwen_model") or store.get_qwen_default_model()) if cur_provider == "qwen" else store.get_default_model()
-        cur_body = anthropic_to_openai(body, cur_model, provider=cur_provider)
-        store.inc_account_request(cur_id)
+        cur_body = _build_openai_request(body, cur_model, cur_provider)
 
-        client = httpx.AsyncClient(proxy=cur_proxy, timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0), http2=False) if cur_proxy else None
-        http = client if client else _http_client
+        if cur_proxy and cur_proxy not in _proxy_clients:
+            _proxy_clients[cur_proxy] = httpx.AsyncClient(
+                proxy=cur_proxy,
+                timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0),
+                http2=False,
+            )
+        http = _proxy_clients[cur_proxy] if cur_proxy else _http_client
         try:
             resp = await http.post(cur_upstream, headers=cur_headers, json=cur_body)
+            store.inc_account_request(cur_id)
             if resp.status_code == 401:
                 if cur_provider == "qwen":
                     new_headers = await _try_refresh_qwen(cur_account)
                     if new_headers:
                         resp = await http.post(cur_upstream, headers=new_headers, json=cur_body)
+                    else:
+                        err_body = resp.text
+                        store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP 401: token refresh failed", int((time.time() - t0) * 1000), is_error=True)
+                        raise HTTPException(status_code=401, detail=f"Qwen token refresh failed: {err_body}")
                 else:
+                    err_body = resp.text
                     store.disable_account(cur_id)
+                    store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP 401 (auto-disabled): {err_body[:60]}", int((time.time() - t0) * 1000), is_error=True)
+                    raise HTTPException(status_code=401, detail=f"Unauthorized: {err_body}")
         except httpx.ReadTimeout:
-            store.inc_account_error(cur_id)
-            store.add_log(cur_name, model, "error", "Timeout", int((time.time() - t0) * 1000))
+            store.finalize_request(cur_id, cur_name, cur_model, "error", "Timeout", int((time.time() - t0) * 1000), is_error=True)
             if attempt < MAX_RETRIES:
                 logger.warning(f"Retrying after timeout (attempt {attempt}/{MAX_RETRIES})")
                 await asyncio.sleep(1)
                 continue
             raise HTTPException(status_code=504, detail="Upstream timeout")
         except Exception as exc:
-            store.inc_account_error(cur_id)
             if _is_proxy_error(exc) and cur_proxy:
                 store.reassign_account_proxy(cur_id)
-                store.add_log(cur_name, model, "error", f"Proxy dead, reassigned: {str(exc)[:60]}", int((time.time() - t0) * 1000))
+                store.finalize_request(cur_id, cur_name, cur_model, "error", f"Proxy dead, reassigned: {str(exc)[:60]}", int((time.time() - t0) * 1000), is_error=True)
             else:
-                store.add_log(cur_name, model, "error", str(exc)[:80], int((time.time() - t0) * 1000))
+                store.finalize_request(cur_id, cur_name, cur_model, "error", str(exc)[:80], int((time.time() - t0) * 1000), is_error=True)
             if attempt < MAX_RETRIES:
                 logger.warning(f"Retrying after error: {exc} (attempt {attempt}/{MAX_RETRIES})")
                 await asyncio.sleep(1)
                 continue
             raise HTTPException(status_code=502, detail=f"Proxy error: {exc}")
-        finally:
-            if client:
-                await client.aclose()
 
         if resp.status_code != 200:
-            store.inc_account_error(cur_id)
-            store.add_log(cur_name, model, "error", f"HTTP {resp.status_code}", int((time.time() - t0) * 1000))
+            store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP {resp.status_code}", int((time.time() - t0) * 1000), is_error=True)
             if _is_retryable(resp.status_code) and attempt < MAX_RETRIES:
                 logger.warning(f"Retrying after HTTP {resp.status_code} (attempt {attempt}/{MAX_RETRIES})")
                 await asyncio.sleep(1)
@@ -1107,13 +1236,12 @@ async def messages(request: Request):
 
         try:
             openai_resp = resp.json()
-            anthropic_resp = openai_to_anthropic(openai_resp, model)
+            anthropic_resp = _parse_openai_response(openai_resp, cur_model)
             usage = openai_resp.get("usage", {})
-            store.inc_account_tokens(cur_id, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
-            store.add_log(cur_name, model, "success", preview, int((time.time() - t0) * 1000))
+            store.finalize_request(cur_id, cur_name, cur_model, "success", preview, int((time.time() - t0) * 1000), usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
             return JSONResponse(content=anthropic_resp)
         except Exception as exc:
-            store.inc_account_error(cur_id)
+            store.finalize_request(cur_id, cur_name, cur_model, "error", f"Parse error: {str(exc)[:60]}", int((time.time() - t0) * 1000), is_error=True)
             raise HTTPException(status_code=502, detail=f"Parse error: {exc}")
 
     raise HTTPException(status_code=502, detail="All retry attempts failed")
@@ -1150,6 +1278,24 @@ async def admin_page():
 
 # ============================================================
 # ADMIN API
+
+@app.get("/api/csrf-token")
+async def api_csrf_token():
+    """Issue a CSRF token for the current session. Clients must include this
+    as X-CSRF-Token header on all POST/PUT/DELETE requests to /api/*."""
+    now = time.time()
+    token = uuid.uuid4().hex
+    _csrf_tokens.append((token, now + _CSRF_TTL))
+    _csrf_tokens_set.add(token)
+    # Purge expired tokens from the front (oldest first)
+    while _csrf_tokens and _csrf_tokens[0][1] <= now:
+        expired_tok, _ = _csrf_tokens.popleft()
+        _csrf_tokens_set.discard(expired_tok)
+    # Also cap by count to bound memory
+    while len(_csrf_tokens) > 1000:
+        oldest_tok, _ = _csrf_tokens.popleft()
+        _csrf_tokens_set.discard(oldest_tok)
+    return JSONResponse({"csrf_token": token})
 # ============================================================
 
 @app.get("/api/accounts")
@@ -1397,8 +1543,14 @@ async def api_set_admin_password(request: Request):
     store.set_admin_password(new_pw)
     resp = JSONResponse({"ok": True})
     if new_pw:
-        resp.set_cookie("admin_session", new_pw, httponly=True, samesite="strict")
+        # Issue a random session token — never store the password in the cookie
+        token = uuid.uuid4().hex
+        _admin_sessions[token] = time.time() + _SESSION_TTL
+        _purge_expired_sessions()
+        resp.set_cookie("admin_session", token, httponly=True, samesite="strict", max_age=int(_SESSION_TTL))
     else:
+        # Clear all sessions when password is removed
+        _admin_sessions.clear()
         resp.delete_cookie("admin_session")
     return resp
 
@@ -1690,6 +1842,20 @@ async def api_reg_stop():
     return JSONResponse({"ok": True})
 
 
+@app.put("/api/reg/settings")
+async def api_reg_settings(request: Request):
+    """Persist registration settings (e.g. headless) to data.json."""
+    d = await request.json()
+    headless = d.get("headless")
+    if headless is not None:
+        store.set_reg_status(
+            running=store.get_reg_status().get("running", False),
+            use_proxy=store.get_reg_status().get("use_proxy", False),
+            headless=bool(headless),
+        )
+    return JSONResponse({"ok": True})
+
+
 @app.get("/api/reg/log-stream")
 async def api_reg_log_stream():
     """SSE stream of registration subprocess stdout."""
@@ -1700,7 +1866,7 @@ async def api_reg_log_stream():
                 yield "data: [no process running]\n\n"
                 return
             try:
-                line = await asyncio.get_event_loop().run_in_executor(
+                line = await asyncio.get_running_loop().run_in_executor(
                     None, proc.stdout.readline
                 )
                 if line:
@@ -1833,17 +1999,7 @@ async def api_pool_check_proxy(proxy_id: str):
         raise HTTPException(404, "Proxy not found")
 
     proxy_str = store._build_proxy_str(p)
-    alive = False
-    try:
-        async with httpx.AsyncClient(
-            proxy=proxy_str,
-            timeout=httpx.Timeout(connect=8.0, read=10.0, write=5.0, pool=5.0),
-            http2=False,
-        ) as client:
-            resp = await client.get("https://httpbin.org/ip", headers={"User-Agent": "Mozilla/5.0"})
-            alive = resp.status_code == 200
-    except Exception:
-        alive = False
+    alive = await _check_proxy_alive(proxy_str)
 
     reassigned = 0
     if not alive:

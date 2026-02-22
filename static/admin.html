@@ -390,6 +390,24 @@ pre{background:var(--s2);padding:14px;border-radius:8px;font-family:monospace;fo
 </div>
 
 <script>
+var _csrfToken = '';
+
+async function _initCsrf() {
+  try {
+    var r = await apiFetch('/api/csrf-token');
+    if (r.ok) { var d = await r.json(); _csrfToken = d.csrf_token || ''; }
+  } catch(e) {}
+}
+
+function apiFetch(url, init) {
+  init = init || {};
+  var method = (init.method || 'GET').toUpperCase();
+  if (method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH') {
+    init.headers = Object.assign({'X-CSRF-Token': _csrfToken}, init.headers || {});
+  }
+  return fetch(url, init);
+}
+
 var _dashInterval = null;
 var _keysInterval = null;
 var _logInterval = null;
@@ -452,12 +470,12 @@ async function loadDash() {
   _dashCountdown = 30;
   try {
     var r = await Promise.all([
-      fetch('/api/stats').then(function(x){return x.json()}),
-      fetch('/api/logs').then(function(x){return x.json()}),
-      fetch('/api/models').then(function(x){return x.json()}),
-      fetch('/api/accounts').then(function(x){return x.json()}),
-      fetch('/api/settings').then(function(x){return x.json()}),
-      fetch('/api/provider').then(function(x){return x.json()})
+      apiFetch('/api/stats').then(function(x){return x.json()}),
+      apiFetch('/api/logs').then(function(x){return x.json()}),
+      apiFetch('/api/models').then(function(x){return x.json()}),
+      apiFetch('/api/accounts').then(function(x){return x.json()}),
+      apiFetch('/api/settings').then(function(x){return x.json()}),
+      apiFetch('/api/provider').then(function(x){return x.json()})
     ]);
     var st=r[0], lg=r[1], md=r[2], ac=r[3], cfg=r[4], prov=r[5];
     var activeProv=prov.active_provider||'iflow';
@@ -500,9 +518,9 @@ async function loadKeys() {
   var ac, prov, qm;
   try {
     var r = await Promise.all([
-      fetch('/api/accounts').then(function(x){return x.json()}),
-      fetch('/api/provider').then(function(x){return x.json()}),
-      fetch('/api/qwen-models').then(function(x){return x.json()})
+      apiFetch('/api/accounts').then(function(x){return x.json()}),
+      apiFetch('/api/provider').then(function(x){return x.json()}),
+      apiFetch('/api/qwen-models').then(function(x){return x.json()})
     ]);
     ac=r[0]; prov=r[1]; qm=r[2];
   } catch(e) {
@@ -587,27 +605,27 @@ function updateProviderUI(){
 async function setProvider(p){
   _activeProvider=p;
   updateProviderUI();
-  await fetch('/api/provider',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active_provider:p})});
+  await apiFetch('/api/provider',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active_provider:p})});
   toast('Switched to '+p.toUpperCase());
 }
 
 async function saveQwenModel(){
   var m=document.getElementById('qwen-model-sel').value;
-  await fetch('/api/provider',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({qwen_default_model:m})});
+  await apiFetch('/api/provider',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({qwen_default_model:m})});
   toast('Qwen model set to '+m);
 }
 
 async function addQwenModel(){
   var m=document.getElementById('qwen-model-new').value.trim();
   if(!m){toast('Model name required','err');return}
-  var r=await fetch('/api/qwen-models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
+  var r=await apiFetch('/api/qwen-models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
   if(r.ok){toast('Model added');document.getElementById('qwen-model-new').value='';loadKeys()}
   else{var e=await r.json();toast(e.detail||'Error','err')}
 }
 
 async function resetAllTokens(){
   if(!confirm('Reset all token usage counters?'))return;
-  await fetch('/api/tokens/reset',{method:'POST'});
+  await apiFetch('/api/tokens/reset',{method:'POST'});
   toast('Token counters reset');
   loadDash();loadKeys();
 }
@@ -621,7 +639,7 @@ async function addKey() {
   var upstream_url=document.getElementById('a-url').value.trim();
   var proxy=document.getElementById('a-proxy').value.trim();
   if(!api_key){toast('API key required','err');return}
-  var r=await fetch('/api/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,api_key:api_key,upstream_url:upstream_url,proxy:proxy,provider:provider})});
+  var r=await apiFetch('/api/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,api_key:api_key,upstream_url:upstream_url,proxy:proxy,provider:provider})});
   if(r.ok){toast('Key added!');closeOv('ov-add');loadKeys()}
   else{var e=await r.json();toast(e.detail||'Error','err')}
 }
@@ -632,7 +650,7 @@ async function startQwenLogin(){
   el.textContent='Starting device flow...';
   document.getElementById('a-qwen-btn').disabled=true;
   try{
-    var r=await fetch('/api/auth/qwen/device',{method:'POST'});
+    var r=await apiFetch('/api/auth/qwen/device',{method:'POST'});
     if(!r.ok){var txt=await r.text();try{var e=JSON.parse(txt);txt=e.detail||txt}catch(_){}el.textContent='Error: '+txt;document.getElementById('a-qwen-btn').disabled=false;return}
     var d=await r.json();
     _qwenSession=d.session_id;
@@ -651,7 +669,7 @@ async function pollQwenToken(){
   var el=document.getElementById('a-qwen-status');
   el.innerHTML='<div>Polling for token (this may take up to 5 min)...</div>';
   try{
-    var r=await fetch('/api/auth/qwen/poll',{method:'POST',headers:{'Content-Type':'application/json'},
+    var r=await apiFetch('/api/auth/qwen/poll',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({session_id:_qwenSession,email:email.trim()})});
     var txt=await r.text();var d;try{d=JSON.parse(txt)}catch(_){el.textContent='Error: '+txt;document.getElementById('a-qwen-btn').disabled=false;return}
     if(d.ok){toast('Qwen account added!');closeOv('ov-add');loadKeys()}
@@ -661,7 +679,7 @@ async function pollQwenToken(){
 
 async function delKey(id){
   if(!confirm('Delete this key?'))return;
-  var r=await fetch('/api/accounts/'+id,{method:'DELETE'});
+  var r=await apiFetch('/api/accounts/'+id,{method:'DELETE'});
   if(r.ok){toast('Deleted');loadKeys()}else toast('Error','err');
 }
 
@@ -669,7 +687,7 @@ async function refreshToken(id, btn){
   var orig = btn.textContent;
   btn.textContent = '...'; btn.disabled = true;
   try {
-    var r = await fetch('/api/accounts/'+id+'/refresh-token', {method:'POST'});
+    var r = await apiFetch('/api/accounts/'+id+'/refresh-token', {method:'POST'});
     var d = await r.json();
     if(r.ok){ toast('Token refreshed (expires in '+Math.round(d.expires_in/3600)+'h)'); loadKeys(); }
     else toast(d.detail||'Refresh failed','err');
@@ -677,7 +695,7 @@ async function refreshToken(id, btn){
   btn.textContent = orig; btn.disabled = false;
 }
 
-async function toggleKey(id){await fetch('/api/accounts/'+id+'/toggle',{method:'POST'});loadKeys()}
+async function toggleKey(id){await apiFetch('/api/accounts/'+id+'/toggle',{method:'POST'});loadKeys()}
 
 function editKey(id, name, url, proxy){
   document.getElementById('e-id').value=id;
@@ -697,21 +715,21 @@ async function saveEditKey(){
   };
   var key=document.getElementById('e-key').value.trim();
   if(key) body.api_key=key;
-  var r=await fetch('/api/accounts/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  var r=await apiFetch('/api/accounts/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok){toast('Account updated');closeOv('ov-edit');loadKeys()}
   else{var e=await r.json();toast(e.detail||'Error','err')}
 }
 
 async function testKey(id,btn){
   btn.disabled=true;btn.textContent='...';
-  var r=await fetch('/api/accounts/'+id+'/check',{method:'POST'});
+  var r=await apiFetch('/api/accounts/'+id+'/check',{method:'POST'});
   var d=await r.json();
   btn.disabled=false;btn.textContent='Test';
   if(d.status==='ok')toast(d.message);else toast(d.message,'err');
 }
 
 async function loadMdl() {
-  var d=await fetch('/api/models').then(function(x){return x.json()});
+  var d=await apiFetch('/api/models').then(function(x){return x.json()});
   var el=document.getElementById('m-list');
   if(!d.models.length){el.innerHTML='<div class="empty"><div class="ic">&#129302;</div>No models</div>';return}
   el.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Model</th><th>Default</th><th>Action</th></tr></thead><tbody>'+
@@ -725,26 +743,26 @@ async function loadMdl() {
 async function addModel(){
   var m=document.getElementById('m-new').value.trim();
   if(!m){toast('Model name required','err');return}
-  var r=await fetch('/api/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
+  var r=await apiFetch('/api/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
   if(r.ok){toast('Model added');document.getElementById('m-new').value='';loadMdl()}
   else{var e=await r.json();toast(e.detail||'Error','err')}
 }
 
 async function delMdl(m){
   if(!confirm('Delete model '+m+'?'))return;
-  var r=await fetch('/api/models/'+encodeURIComponent(m),{method:'DELETE'});
+  var r=await apiFetch('/api/models/'+encodeURIComponent(m),{method:'DELETE'});
   if(r.ok){toast('Deleted');loadMdl()}else toast('Error','err');
 }
 
 async function setDef(m){
-  var r=await fetch('/api/models/default',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
+  var r=await apiFetch('/api/models/default',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
   if(r.ok){toast('Default set to '+m);loadMdl()}else toast('Error','err');
 }
 
 async function loadCfg(){
   var r = await Promise.all([
-    fetch('/api/settings').then(function(x){return x.json()}),
-    fetch('/api/admin/password').then(function(x){return x.json()})
+    apiFetch('/api/settings').then(function(x){return x.json()}),
+    apiFetch('/api/admin/password').then(function(x){return x.json()})
   ]);
   var d=r[0], pw=r[1];
   document.getElementById('c-url').value=d.upstream_url||'';
@@ -789,7 +807,7 @@ async function saveCfg(){
     system_prompt:document.getElementById('c-sys').value,
     system_prompt_mode:document.getElementById('c-pm').value
   };
-  var r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  var r=await apiFetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok)toast('Settings saved!');else toast('Error','err');
 }
 
@@ -797,13 +815,13 @@ async function saveAdminPassword(){
   var pw=document.getElementById('c-pw').value;
   var pw2=document.getElementById('c-pw2').value;
   if(pw !== pw2){toast('Passwords do not match','err');return}
-  var r=await fetch('/api/admin/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+  var r=await apiFetch('/api/admin/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
   if(r.ok){
     toast(pw?'Password set':'Password removed');
     document.getElementById('c-pw').value='';
     document.getElementById('c-pw2').value='';
     document.getElementById('c-pw-status').textContent=pw?'&#128274; Password is set':'&#128275; No password (open access)';
-    if(pw) document.cookie='admin_session='+encodeURIComponent(pw)+';path=/;samesite=strict';
+    // Session cookie is set server-side via Set-Cookie header — do not overwrite it here
   } else toast('Error','err');
 }
 
@@ -819,13 +837,13 @@ async function saveVision(){
       prompt:document.getElementById('v-prompt').value.trim()
     }
   };
-  var r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  var r=await apiFetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok){toast('Vision settings saved!');toggleVisionFields()}else toast('Error','err');
 }
 
 async function loadLog(){
   if(!_logInterval) _logInterval = setInterval(loadLog, 5000);
-  var lg = await fetch('/api/logs').then(function(x){return x.json()}).catch(function(){return null});
+  var lg = await apiFetch('/api/logs').then(function(x){return x.json()}).catch(function(){return null});
   var el=document.getElementById('l-list');
   if(lg === null){el.innerHTML='<div class="empty"><div class="ic">&#9888;</div>Failed to load logs</div>';return}
   if(!lg.length){el.innerHTML='<div class="empty"><div class="ic">&#128237;</div>No logs yet</div>';return}
@@ -842,7 +860,7 @@ async function loadLog(){
 
 async function clearLogs(){
   if(!confirm('Clear all logs?'))return;
-  await fetch('/api/logs',{method:'DELETE'});
+  await apiFetch('/api/logs',{method:'DELETE'});
   toast('Logs cleared');
   loadLog();
 }
@@ -877,7 +895,7 @@ function clearRegLog() {
 }
 
 async function loadRegQueue() {
-  var ac = await fetch('/api/reg/accounts').then(function(x){return x.json()});
+  var ac = await apiFetch('/api/reg/accounts').then(function(x){return x.json()});
   document.getElementById('r-count').textContent = ac.length;
   var el = document.getElementById('r-queue');
   if(!ac.length){el.innerHTML='<div class="empty"><div class="ic">&#128221;</div>No accounts in queue</div>';return}
@@ -888,7 +906,7 @@ async function loadRegQueue() {
 }
 
 async function loadRegResults() {
-  var rs = await fetch('/api/reg/results').then(function(x){return x.json()});
+  var rs = await apiFetch('/api/reg/results').then(function(x){return x.json()});
   var el = document.getElementById('r-results');
   if(!rs.length){el.innerHTML='<div class="empty"><div class="ic">&#128273;</div>No results yet</div>';return}
   el.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Email</th><th>API Key</th><th>Status</th><th>Time</th></tr></thead><tbody>'+
@@ -901,7 +919,7 @@ async function loadRegResults() {
 }
 
 async function loadRegStatus() {
-  var st = await fetch('/api/reg/status').then(function(x){return x.json()});
+  var st = await apiFetch('/api/reg/status').then(function(x){return x.json()});
   var startBtn = document.getElementById('r-start');
   var stopBtn = document.getElementById('r-stop');
   // Sync headless checkbox with stored setting
@@ -922,13 +940,15 @@ async function loadRegStatus() {
 
 async function saveHeadless() {
   var headless = document.getElementById('r-headless').checked;
-  // Persist by starting a dummy update — just store via reg/start won't work when not running
-  // So we use a dedicated settings call if available, otherwise it's saved on next Start
-  localStorage.setItem('reg_headless', headless ? '1' : '0');
+  await apiFetch('/api/reg/settings', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({headless: headless})
+  });
 }
 
 async function loadRegProxies() {
-  var px = await fetch('/api/reg/proxies').then(function(x){return x.json()});
+  var px = await apiFetch('/api/reg/proxies').then(function(x){return x.json()});
   document.getElementById('r-pcount').textContent = px.length;
   var el = document.getElementById('r-proxies');
   if(!px.length){el.innerHTML='';return}
@@ -944,27 +964,27 @@ async function loadRegProxies() {
 async function importRegProxies() {
   var text = document.getElementById('r-proxy-input').value.trim();
   if(!text){toast('Paste proxies first','err');return}
-  var r = await fetch('/api/reg/proxies/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
+  var r = await apiFetch('/api/reg/proxies/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
   var d = await r.json();
   if(r.ok){toast('Imported '+d.added+' proxy(s)');document.getElementById('r-proxy-input').value='';loadRegProxies()}
   else toast(d.detail||'Error','err');
 }
 
 async function delRegProxy(id) {
-  await fetch('/api/reg/proxies/'+id,{method:'DELETE'});
+  await apiFetch('/api/reg/proxies/'+id,{method:'DELETE'});
   toast('Proxy deleted');loadRegProxies();
 }
 
 async function clearRegProxies() {
   if(!confirm('Clear all proxies?'))return;
-  await fetch('/api/reg/proxies',{method:'DELETE'});
+  await apiFetch('/api/reg/proxies',{method:'DELETE'});
   toast('Proxies cleared');loadRegProxies();
 }
 
 async function addRegAccounts() {
   var text = document.getElementById('r-input').value.trim();
   if(!text){toast('Paste accounts first','err');return}
-  var r = await fetch('/api/reg/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
+  var r = await apiFetch('/api/reg/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
   var d = await r.json();
   if(r.ok){toast('Added '+d.added+' account(s)');document.getElementById('r-input').value='';loadRegQueue()}
   else toast(d.detail||'Error','err');
@@ -972,13 +992,13 @@ async function addRegAccounts() {
 
 async function clearRegAccounts() {
   if(!confirm('Clear all accounts in queue?'))return;
-  await fetch('/api/reg/accounts',{method:'DELETE'});
+  await apiFetch('/api/reg/accounts',{method:'DELETE'});
   toast('Queue cleared');loadRegQueue();
 }
 
 async function clearRegResults() {
   if(!confirm('Clear all results?'))return;
-  await fetch('/api/reg/results',{method:'DELETE'});
+  await apiFetch('/api/reg/results',{method:'DELETE'});
   toast('Results cleared');loadRegResults();
 }
 
@@ -986,13 +1006,13 @@ async function startReg() {
   var useProxy = document.getElementById('r-proxy').checked;
   var workers = parseInt(document.getElementById('r-workers').value)||1;
   var headless = document.getElementById('r-headless').checked;
-  var r = await fetch('/api/reg/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({use_proxy:useProxy,workers:workers,headless:headless})});
+  var r = await apiFetch('/api/reg/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({use_proxy:useProxy,workers:workers,headless:headless})});
   if(r.ok){toast('Registration started! ('+workers+' worker'+(workers>1?'s':'')+', '+(headless?'headless':'visible')+')');loadRegStatus()}
   else{var d=await r.json();toast(d.detail||'Error','err')}
 }
 
 async function stopReg() {
-  await fetch('/api/reg/stop',{method:'POST'});
+  await apiFetch('/api/reg/stop',{method:'POST'});
   toast('Registration stopped');loadRegStatus();
 }
 
@@ -1015,8 +1035,8 @@ async function loadPool() {
   var px, cfg;
   try {
     var r = await Promise.all([
-      fetch('/api/pool/proxies').then(function(x){return x.json()}),
-      fetch('/api/pool/settings').then(function(x){return x.json()})
+      apiFetch('/api/pool/proxies').then(function(x){return x.json()}),
+      apiFetch('/api/pool/settings').then(function(x){return x.json()})
     ]);
     px=r[0]; cfg=r[1];
   } catch(e) {
@@ -1060,7 +1080,7 @@ async function importPool() {
     if(l.toLowerCase().startsWith('http:') || l.toLowerCase().startsWith('socks5:')) return l;
     return (scheme==='http' ? 'http:' : 'socks5:') + l;
   }).filter(Boolean).join('\n');
-  var r = await fetch('/api/pool/proxies/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:lines})});
+  var r = await apiFetch('/api/pool/proxies/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:lines})});
   var d = await r.json();
   if(r.ok){toast('Imported '+d.added+' proxy(s)');document.getElementById('p-input-'+scheme).value='';loadPool()}
   else toast(d.detail||'Error','err');
@@ -1069,7 +1089,7 @@ async function importPool() {
 async function checkProxy(id) {
   var el = document.getElementById('pst-'+id);
   if(el) el.innerHTML='<span style="color:var(--m);font-size:11px">Checking…</span>';
-  var r = await fetch('/api/pool/proxies/'+id+'/check',{method:'POST'});
+  var r = await apiFetch('/api/pool/proxies/'+id+'/check',{method:'POST'});
   var d = await r.json();
   _pStatuses[id] = d.alive;
   if(el) el.innerHTML = d.alive
@@ -1079,7 +1099,7 @@ async function checkProxy(id) {
 }
 
 async function checkAllProxies() {
-  var r = await fetch('/api/pool/proxies').then(function(x){return x.json()}).catch(function(){return []});
+  var r = await apiFetch('/api/pool/proxies').then(function(x){return x.json()}).catch(function(){return []});
   if(!r.length){toast('No proxies in pool','err');return}
   toast('Checking '+r.length+' proxy(s) in parallel…');
   await Promise.all(r.map(function(p){return checkProxy(p.id)}));
@@ -1088,37 +1108,37 @@ async function checkAllProxies() {
 
 async function savePoolMax() {
   var max = parseInt(document.getElementById('p-max').value)||1;
-  await fetch('/api/pool/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_per_proxy:max})});
+  await apiFetch('/api/pool/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_per_proxy:max})});
   toast('Max per proxy set to '+max);loadPool();
 }
 
 async function delPoolProxy(id) {
   if(!confirm('Delete this proxy?'))return;
-  await fetch('/api/pool/proxies/'+id,{method:'DELETE'});
+  await apiFetch('/api/pool/proxies/'+id,{method:'DELETE'});
   toast('Proxy deleted');loadPool();
 }
 
 async function clearPool() {
   if(!confirm('Clear entire proxy pool?'))return;
-  await fetch('/api/pool/proxies',{method:'DELETE'});
+  await apiFetch('/api/pool/proxies',{method:'DELETE'});
   toast('Pool cleared');loadPool();
 }
 
 async function reassignAllProxies() {
   if(!confirm('Reassign proxies from pool to all accounts? This will reset all current proxy assignments.'))return;
-  var r = await fetch('/api/pool/reassign-all',{method:'POST'});
+  var r = await apiFetch('/api/pool/reassign-all',{method:'POST'});
   var d = await r.json();
   if(r.ok){toast('Reassigned proxies to '+d.updated+' account(s)');loadPool();loadKeys()}
   else toast(d.detail||'Error','err');
 }
 
 async function reassignProxy(aid) {
-  var r = await fetch('/api/accounts/'+aid+'/reassign-proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  var r = await apiFetch('/api/accounts/'+aid+'/reassign-proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
   if(r.ok){toast('Proxy reassigned');loadKeys()}
   else{var d=await r.json();toast(d.detail||'Error','err')}
 }
 
-loadDash();
+_initCsrf().then(function(){ loadDash(); });
 </script>
 </body>
 </html>
