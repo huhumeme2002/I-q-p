@@ -665,6 +665,31 @@ def _truncate_context(body: dict) -> dict:
 
         new_estimated = _estimate_tokens(body)
 
+    # Super aggressive: if STILL over limit, trim protected messages from oldest
+    # This happens when the last N messages + tool definitions alone exceed max_tokens
+    # We must keep at least 4 messages (2 recent turns) to maintain conversation coherence
+    MIN_KEEP = 4
+    if new_estimated > max_tokens and len(protected) > MIN_KEEP:
+        cw_logger.warning(
+            f"[ContextWindow:DEEP_TRIM] Still {new_estimated} tokens with {len(protected)} "
+            f"protected msgs. Trimming protected messages (keeping min {MIN_KEEP})..."
+        )
+        while len(protected) > MIN_KEEP and _estimate_tokens(body) > max_tokens:
+            protected.pop(0)
+            removed_count += 1
+            if notice_template:
+                kept_count = len(kept_removable) + len(protected)
+                notice_text = notice_template.replace("{removed}", str(removed_count)).replace("{kept}", str(kept_count))
+                notice_msg = {
+                    "role": "user",
+                    "content": [{"type": "text", "text": notice_text}],
+                }
+                body["messages"] = kept_removable + [notice_msg] + protected
+            else:
+                body["messages"] = kept_removable + protected
+
+        new_estimated = _estimate_tokens(body)
+
     cw_logger.warning(
         f"[ContextWindow:DONE] {estimated} → {new_estimated} tokens | "
         f"msgs: {len(messages)} → {len(body['messages'])} | "
