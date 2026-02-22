@@ -1741,10 +1741,11 @@ import subprocess as _subprocess
 _reg_process: _subprocess.Popen | None = None
 _reg_log_buffer: deque[str] = deque(maxlen=500)
 _reg_log_reader_task: asyncio.Task | None = None
+_REG_LOG_FILE = Path(__file__).parent / "reg.log"
 
 
 async def _reg_log_reader():
-    """Background task: reads reg subprocess stdout into _reg_log_buffer."""
+    """Background task: reads reg subprocess stdout into _reg_log_buffer and reg.log."""
     while True:
         proc = _reg_process
         if proc is None or proc.stdout is None:
@@ -1755,7 +1756,13 @@ async def _reg_log_reader():
                 None, proc.stdout.readline
             )
             if line:
-                _reg_log_buffer.append(line.decode("utf-8", errors="replace").rstrip())
+                text = line.decode("utf-8", errors="replace").rstrip()
+                _reg_log_buffer.append(text)
+                try:
+                    with _REG_LOG_FILE.open("a", encoding="utf-8") as f:
+                        f.write(text + "\n")
+                except Exception:
+                    pass
             else:
                 await asyncio.sleep(0.2)
         except Exception:
@@ -1845,7 +1852,12 @@ async def api_reg_start(request: Request):
         cmd.append("--headless")
     cmd.extend(["--workers", str(workers)])
 
-    _reg_log_buffer.append("─" * 40)
+    # Clear previous log
+    try:
+        _REG_LOG_FILE.write_text("", encoding="utf-8")
+    except Exception:
+        pass
+    _reg_log_buffer.clear()
     _reg_process = _subprocess.Popen(
         cmd,
         cwd=str(Path(__file__).parent),
@@ -1914,8 +1926,11 @@ async def api_reg_log_stream():
 
 @app.get("/api/reg/log-poll")
 async def api_reg_log_poll(offset: int = 0):
-    """Return reg log lines from offset. Use instead of EventSource for auth support."""
-    lines = list(_reg_log_buffer)
+    """Return reg log lines from offset, reading from reg.log file."""
+    try:
+        lines = _REG_LOG_FILE.read_text(encoding="utf-8").splitlines() if _REG_LOG_FILE.exists() else []
+    except Exception:
+        lines = []
     return JSONResponse({"lines": lines[offset:], "total": len(lines)})
 
 
