@@ -1,24 +1,41 @@
-# Auto-Continue Feature - Debug & Improvement
+# Auto-Continue Feature — Bug Fix
 
-## Steps
+## Root Cause
+Model (GLM-4.7) at 86+ messages returns `completion_tokens=18` but `response_text=''` (empty).
+The 18 tokens are thinking/overhead tokens, NOT actual text content.
+Retrying with empty assistant message (`content_len=0`) only makes context longer and model more stuck.
 
-- [x] 1. `store.py` — Auto_continue settings (DEFAULT_DATA, getter, update_settings)
-- [x] 2. `proxy.py` — Helper functions (_should_auto_continue, _build_continue_body)
-- [x] 3. `proxy.py` — Streaming buffer-based auto-continue logic
-- [x] 4. `proxy.py` — Non-streaming auto-continue retry loop
-- [x] 5. `static/admin.html` — Auto-Continue settings UI card
-- [x] 6. `data.json` — auto_continue enabled
-- [x] 7. `proxy.py` — Add diagnostic logging to _should_auto_continue()
-- [x] 8. `proxy.py` — Add always-on logging after stream completes
-- [x] 9. `proxy.py` — Improve token counting for iFlow streaming (effective_tokens)
-- [ ] 10. Restart proxy and test with real coding agent session
+## Fixes Applied
 
-## How to debug
+- [x] 1. **Skip auto-continue when response_text is empty** (streaming path)
+  - `[AutoContinue:STUCK]` log when model returns tokens but no text
+  - Flushes buffered response to client instead of retrying
+  - File: `proxy.py` — streaming `gen()` function
 
-After restarting proxy, watch logs for these entries:
-- `[AutoContinue:CHECK]` — Appears after EVERY request (stream & non-stream)
-- `[AutoContinue:SKIP]` — Shows exactly WHY auto-continue didn't trigger
-- `[AutoContinue:TRIGGER]` — Shows when auto-continue IS triggered
-- `[AutoContinue] Lazy response detected` — Confirms retry is happening
+- [x] 2. **Skip auto-continue when response_text is empty** (non-streaming path)
+  - Same `[AutoContinue:STUCK]` detection for non-streaming responses
+  - Passes through to client instead of retrying
+  - File: `proxy.py` — non-streaming while loop
 
-Set `DEBUG_REQUESTS=1` env var for even more detail.
+- [x] 3. **Don't append empty assistant messages**
+  - `_build_continue_body()` now skips assistant message if `assistant_text` is empty
+  - Prevents confusing the model with `{"role": "assistant", "content": ""}`
+
+- [x] 4. **Escalating nudge messages**
+  - 3 levels: gentle → strong → forceful
+  - Each retry uses progressively stronger language
+  - Custom message from settings overrides escalation
+
+- [x] 5. **Pass attempt number to `_build_continue_body()`**
+  - Both streaming and non-streaming paths now pass `attempt=ac_attempt`
+
+## Log Messages to Watch
+- `[AutoContinue:STUCK]` — Model is truly stuck (context too long), no retry
+- `[AutoContinue:TRIGGER]` — Lazy response detected, will retry
+- `[AutoContinue:SKIP]` — Conditions not met for auto-continue
+- `[AutoContinue:CHECK]` — Diagnostic info after each response
+
+## Next Steps
+- [ ] Restart proxy server to pick up changes
+- [ ] Test with `DEBUG_REQUESTS=1` to verify STUCK detection works
+- [ ] Consider adding context compaction for long conversations (future)

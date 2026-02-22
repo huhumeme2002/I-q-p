@@ -576,27 +576,46 @@ def _should_auto_continue(
     return True
 
 
-def _build_continue_body(body: dict, assistant_text: str) -> dict:
+# Escalating nudge messages for auto-continue retries
+_AC_NUDGE_MESSAGES = [
+    # Attempt 1: gentle nudge
+    "You stopped without using any tools. Continue and complete the task by "
+    "actually calling the appropriate tools. Do not just describe what you would do - do it.",
+    # Attempt 2: stronger nudge
+    "You MUST use tools to complete this task. Do NOT respond with text only. "
+    "Call the appropriate tool RIGHT NOW. Pick the most relevant tool and use it immediately.",
+    # Attempt 3+: forceful with specific instruction
+    "CRITICAL: You have failed to call any tools multiple times. You MUST call a tool in your "
+    "very next response. If you are unsure which tool to use, use the first available tool. "
+    "Do NOT output any text without a tool call. ACT NOW.",
+]
+
+
+def _build_continue_body(body: dict, assistant_text: str, attempt: int = 1) -> dict:
     """Append the model's short response + a 'Continue' nudge to the Anthropic-format body.
 
     Returns a new body dict (deep copy) with two extra messages appended:
     1. assistant message with the short response text
-    2. user message with the continue prompt
+    2. user message with the continue prompt (escalating based on attempt number)
     """
     ac = store.get_auto_continue_settings()
-    continue_msg = ac.get(
-        "message",
-        "You stopped without using any tools. Continue and complete the task by "
-        "actually calling the appropriate tools. Do not just describe what you would do - do it.",
-    )
+    custom_msg = ac.get("message", "").strip()
+
+    # Use escalating messages, or custom message if configured
+    if custom_msg:
+        continue_msg = custom_msg
+    else:
+        idx = min(attempt - 1, len(_AC_NUDGE_MESSAGES) - 1)
+        continue_msg = _AC_NUDGE_MESSAGES[idx]
 
     new_body = copy.deepcopy(body)
 
-    # Add the assistant's short response
-    new_body["messages"].append({
-        "role": "assistant",
-        "content": [{"type": "text", "text": assistant_text or ""}],
-    })
+    # Add the assistant's short response (skip if empty to avoid confusing the model)
+    if assistant_text and assistant_text.strip():
+        new_body["messages"].append({
+            "role": "assistant",
+            "content": [{"type": "text", "text": assistant_text}],
+        })
 
     # Add the continue nudge
     new_body["messages"].append({
@@ -1320,7 +1339,19 @@ async def messages(request: Request):
                         has_tc = _usage.get("has_tool_calls", False)
                         resp_text = _usage.get("response_text", "")
 
-                        if _should_auto_continue(body, comp_tokens, stop, has_tc) and ac_attempt < ac_max_retries:
+                        # Skip auto-continue if response_text is empty — model is truly
+                        # stuck (context too long), not just lazy. Retrying would only
+                        # add empty messages and make context even longer.
+                        if not resp_text.strip():
+                            _ac_log.warning(
+                                f"[AutoContinue:STUCK] response_text is EMPTY — model returned "
+                                f"{comp_tokens} overhead tokens but no text. Context likely too long "
+                                f"({len(body.get('messages',[]))} msgs, ~{_usage.get('prompt_tokens',0)} prompt tokens). "
+                                f"Flushing buffered response to client. Consider starting a new chat."
+                            )
+                            for bc in buffered_chunks:
+                                yield bc
+                        elif _should_auto_continue(body, comp_tokens, stop, has_tc) and ac_attempt < ac_max_retries:
                             ac_attempt += 1
                             logger.warning(
                                 f"[AutoContinue] Lazy response detected: {comp_tokens} tokens, "
@@ -1329,7 +1360,7 @@ async def messages(request: Request):
                                 f"Retrying {ac_attempt}/{ac_max_retries}..."
                             )
                             # Modify body with continue nudge and retry
-                            body = _build_continue_body(body, resp_text)
+                            body = _build_continue_body(body, resp_text, attempt=ac_attempt)
                             msg_id = f"msg_{uuid.uuid4().hex[:24]}"
                             attempt = 0  # reset HTTP retry counter for the new request
                             continue  # restart the while loop with modified body
@@ -1463,7 +1494,16 @@ async def messages(request: Request):
 
             # ── Auto-continue check ──
             resp_text = (openai_resp.get("choices", [{}])[0].get("message", {}).get("content") or "")
-            if _should_auto_continue(body, comp_tokens, stop_reason, has_tc) and ac_attempt < ac_max_retries:
+
+            # Skip auto-continue if response_text is empty — model is truly
+            # stuck (context too long), not just lazy.
+            if not resp_text.strip() and _should_auto_continue(body, comp_tokens, stop_reason, has_tc):
+                _ac_log.warning(
+                    f"[AutoContinue:STUCK] non-stream response_text is EMPTY — model returned "
+                    f"{comp_tokens} overhead tokens but no text. Context likely too long "
+                    f"({len(body.get('messages',[]))} msgs). Passing through to client."
+                )
+            elif _should_auto_continue(body, comp_tokens, stop_reason, has_tc) and ac_attempt < ac_max_retries:
                 ac_attempt += 1
                 logger.warning(
                     f"[AutoContinue] Lazy non-stream detected: {comp_tokens} tokens, "
@@ -1471,7 +1511,7 @@ async def messages(request: Request):
                     f"(msgs={len(body.get('messages', []))}, tools={len(body.get('tools', []))}). "
                     f"Retrying {ac_attempt}/{ac_max_retries}..."
                 )
-                body = _build_continue_body(body, resp_text)
+                body = _build_continue_body(body, resp_text, attempt=ac_attempt)
                 attempt = 0  # reset so while loop restarts from attempt=1
                 continue
 
