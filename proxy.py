@@ -977,7 +977,36 @@ def _estimate_tokens(body: dict) -> int:
     return max(1, total)
 
 
-@app.post("/v1/messages/count_tokens")
+# Max input tokens before trimming old messages (leave room for output)
+_CONTEXT_LIMIT = int(os.environ.get("CONTEXT_LIMIT", "60000"))
+
+
+def _trim_messages(body: dict) -> dict:
+    """Trim oldest messages when estimated input tokens exceed _CONTEXT_LIMIT.
+
+    Keeps: system prompt, tool definitions, and the most recent messages.
+    Always keeps at least the last 2 messages (last user turn + last assistant turn).
+    Trims from the oldest messages first, never removes the last 2.
+    """
+    if _estimate_tokens(body) <= _CONTEXT_LIMIT:
+        return body
+
+    messages = list(body.get("messages", []))
+    if len(messages) <= 2:
+        return body
+
+    # Trim from oldest, keep at least last 2
+    while len(messages) > 2:
+        trimmed = dict(body)
+        trimmed["messages"] = messages
+        if _estimate_tokens(trimmed) <= _CONTEXT_LIMIT:
+            break
+        messages.pop(0)
+
+    result = dict(body)
+    result["messages"] = messages
+    logger.info(f"[ContextTrim] Trimmed to {len(messages)} messages (~{_estimate_tokens(result)} tokens)")
+    return result
 async def count_tokens(request: Request):
     try:
         body = await request.json()
@@ -1058,6 +1087,8 @@ async def messages(request: Request):
 
     is_stream = body.get("stream", False)
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
+
+    body = _trim_messages(body)
 
     account = store.pick_account()
     if not account:
