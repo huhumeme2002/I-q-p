@@ -226,6 +226,37 @@ pre{background:var(--s2);padding:14px;border-radius:8px;font-family:monospace;fo
     <div id="c-pw-status" style="font-size:12px;color:var(--m);margin-bottom:10px"></div>
     <button class="btn bp" onclick="saveAdminPassword()">Set Password</button>
   </div>
+
+  <!-- Auto-Continue Settings -->
+  <div class="card" id="ac-card">
+    <div class="ct">&#x1F504; Auto-Continue <span style="font-size:10px;color:var(--a2);font-weight:400;text-transform:none">(Anti-Lazy Model)</span></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <label class="tg"><input type="checkbox" id="ac-enabled" onchange="saveAC()"><span class="ts"></span></label>
+      <span style="font-size:13px">Enable Auto-Continue</span>
+      <span style="color:var(--m);font-size:11px;margin-left:4px">— Detect lazy responses and retry with a nudge</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div class="fg">
+        <label class="fl">Token Threshold</label>
+        <input class="fi" type="number" id="ac-threshold" min="10" max="500" value="80" style="width:100%">
+        <div style="color:var(--m);font-size:11px;margin-top:3px">Responses with fewer tokens trigger retry</div>
+      </div>
+      <div class="fg">
+        <label class="fl">Max Retries</label>
+        <input class="fi" type="number" id="ac-max-retries" min="1" max="10" value="3" style="width:100%">
+        <div style="color:var(--m);font-size:11px;margin-top:3px">Max auto-continue attempts per request</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <label class="tg"><input type="checkbox" id="ac-only-tools" onchange="saveAC()" checked><span class="ts"></span></label>
+      <span style="font-size:13px">Only trigger when request has tools</span>
+    </div>
+    <div class="fg">
+      <label class="fl">Continue Message</label>
+      <textarea class="fi" id="ac-message" rows="3" style="width:100%;resize:vertical"></textarea>
+    </div>
+    <button class="btn bp" onclick="saveAC()">Save Auto-Continue Settings</button>
+  </div>
 </div>
 
 <!-- Registration -->
@@ -784,6 +815,13 @@ async function loadCfg(){
   toggleVisionPool();
   // Password status
   document.getElementById('c-pw-status').textContent = pw.has_password ? '&#128274; Password is set' : '&#128275; No password (open access)';
+  // Auto-continue settings
+  var ac=d.auto_continue||{};
+  document.getElementById('ac-enabled').checked=!!ac.enabled;
+  document.getElementById('ac-threshold').value=ac.token_threshold||80;
+  document.getElementById('ac-max-retries').value=ac.max_retries||3;
+  document.getElementById('ac-only-tools').checked=ac.only_with_tools!==false;
+  document.getElementById('ac-message').value=ac.message||'You stopped without using any tools. Continue and complete the task by actually calling the appropriate tools. Do not just describe what you would do - do it.';
 }
 
 function toggleVisionFields(){
@@ -823,6 +861,20 @@ async function saveAdminPassword(){
     document.getElementById('c-pw-status').textContent=pw?'&#128274; Password is set':'&#128275; No password (open access)';
     // Session cookie is set server-side via Set-Cookie header — do not overwrite it here
   } else toast('Error','err');
+}
+
+async function saveAC(){
+  var payload={
+    auto_continue:{
+      enabled:document.getElementById('ac-enabled').checked,
+      token_threshold:parseInt(document.getElementById('ac-threshold').value)||80,
+      max_retries:parseInt(document.getElementById('ac-max-retries').value)||3,
+      only_with_tools:document.getElementById('ac-only-tools').checked,
+      message:document.getElementById('ac-message').value.trim()
+    }
+  };
+  var r=await apiFetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(r.ok)toast('Auto-Continue settings saved');else toast('Error saving settings','err');
 }
 
 async function saveVision(){

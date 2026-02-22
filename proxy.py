@@ -503,6 +503,82 @@ async def process_vision_in_messages(body: dict) -> dict:
 
 
 # ============================================================
+# AUTO-CONTINUE: Detect lazy model responses and retry with nudge
+# ============================================================
+
+def _should_auto_continue(
+    body: dict,
+    completion_tokens: int,
+    stop_reason: str,
+    has_tool_calls: bool,
+) -> bool:
+    """Check if the response looks like a 'lazy' model that stopped without using tools.
+
+    Returns True if all conditions are met:
+    - auto_continue is enabled in settings
+    - only_with_tools: original request has tools defined
+    - completion_tokens < token_threshold
+    - stop_reason is 'end_turn' (not 'tool_use' or 'max_tokens')
+    - response has no tool_calls
+    """
+    ac = store.get_auto_continue_settings()
+    if not ac.get("enabled"):
+        return False
+
+    threshold = ac.get("token_threshold", 80)
+    only_with_tools = ac.get("only_with_tools", True)
+
+    # If only_with_tools is set, skip if the request has no tools
+    if only_with_tools and not body.get("tools"):
+        return False
+
+    # Must be end_turn (not tool_use or max_tokens)
+    if stop_reason != "end_turn":
+        return False
+
+    # Must have low token count
+    if completion_tokens >= threshold:
+        return False
+
+    # Must NOT have tool calls
+    if has_tool_calls:
+        return False
+
+    return True
+
+
+def _build_continue_body(body: dict, assistant_text: str) -> dict:
+    """Append the model's short response + a 'Continue' nudge to the Anthropic-format body.
+
+    Returns a new body dict (deep copy) with two extra messages appended:
+    1. assistant message with the short response text
+    2. user message with the continue prompt
+    """
+    ac = store.get_auto_continue_settings()
+    continue_msg = ac.get(
+        "message",
+        "You stopped without using any tools. Continue and complete the task by "
+        "actually calling the appropriate tools. Do not just describe what you would do - do it.",
+    )
+
+    new_body = copy.deepcopy(body)
+
+    # Add the assistant's short response
+    new_body["messages"].append({
+        "role": "assistant",
+        "content": [{"type": "text", "text": assistant_text or ""}],
+    })
+
+    # Add the continue nudge
+    new_body["messages"].append({
+        "role": "user",
+        "content": [{"type": "text", "text": continue_msg}],
+    })
+
+    return new_body
+
+
+# ============================================================
 # CONVERT: Anthropic Tools → OpenAI Tools
 # ============================================================
 
@@ -822,6 +898,10 @@ async def stream_anthropic_sse(
                 "delta": {"type": "text_delta", "text": text_content},
             })
 
+            # Accumulate response text for auto-continue detection
+            if usage_out is not None:
+                usage_out["response_text"] = usage_out.get("response_text", "") + text_content
+
         # Tool calls
         for tc_delta in (delta.get("tool_calls") or []):
             tc_index = tc_delta.get("index", 0)
@@ -896,6 +976,7 @@ async def stream_anthropic_sse(
 
     if usage_out is not None:
         usage_out["stop_reason"] = stop_reason
+        usage_out["has_tool_calls"] = bool(tool_blocks)
 
 
 # ============================================================
@@ -1081,10 +1162,16 @@ async def messages(request: Request):
             preview = c[:80]
             break
 
+    # Auto-continue settings
+    ac_settings = store.get_auto_continue_settings()
+    ac_max_retries = ac_settings.get("max_retries", 3)
+    ac_threshold = ac_settings.get("token_threshold", 80)
+
     if is_stream:
         async def gen():
-            nonlocal account
+            nonlocal account, body
             _usage = {}
+            ac_attempt = 0  # auto-continue attempt counter
             attempt = 0
             while attempt < MAX_RETRIES:
                 attempt += 1
@@ -1105,7 +1192,7 @@ async def messages(request: Request):
                 _dbg = os.environ.get("DEBUG_REQUESTS", "").lower() in ("1", "true")
                 if _dbg:
                     msgs_summary = [{"role": m.get("role"), "content_len": len(str(m.get("content",""))), "has_tool_calls": bool(m.get("tool_calls"))} for m in cur_body.get("messages", [])]
-                    logger.info(f"[DEBUG] → {cur_model} | stream={cur_body.get('stream')} | msgs={len(msgs_summary)} | tools={len(cur_body.get('tools',[]))} | {msgs_summary[-2:]}")
+                    logger.info(f"[DEBUG] → {cur_model} | stream={cur_body.get('stream')} | msgs={len(msgs_summary)} | tools={len(cur_body.get('tools',[]))} | ac_attempt={ac_attempt} | {msgs_summary[-2:]}")
 
                 if cur_proxy and cur_proxy not in _proxy_clients:
                     _proxy_clients[cur_proxy] = httpx.AsyncClient(
@@ -1149,10 +1236,59 @@ async def messages(request: Request):
                                 continue
                             yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': err}})}\n\n"
                             return
+
+                        # ── Auto-continue: buffer-based streaming ──
+                        # Buffer SSE chunks; if token count stays below threshold,
+                        # check for lazy response and retry with continue nudge.
+                        # If token count exceeds threshold, flush buffer and pass-through.
+                        _usage = {"response_text": ""}
+                        buffered_chunks = []
+                        token_count = 0
+                        threshold_passed = False
+
                         async for chunk in stream_anthropic_sse(resp.aiter_lines(), cur_model, msg_id, _usage):
-                            yield chunk
+                            if not threshold_passed:
+                                buffered_chunks.append(chunk)
+                                # Count text_delta events as approximate token count
+                                if '"text_delta"' in chunk:
+                                    token_count += 1
+                                if token_count >= ac_threshold:
+                                    # Exceeded threshold — not a lazy response, flush and pass-through
+                                    threshold_passed = True
+                                    for bc in buffered_chunks:
+                                        yield bc
+                                    buffered_chunks = []
+                            else:
+                                yield chunk
+
                     if _dbg:
-                        logger.info(f"[DEBUG] ← {cur_model} | stream=True | usage={_usage}")
+                        logger.info(f"[DEBUG] ← {cur_model} | stream=True | usage={_usage} | buffered={not threshold_passed}")
+
+                    # If we never passed the threshold, check for lazy response
+                    if not threshold_passed:
+                        comp_tokens = _usage.get("completion_tokens", 0) or token_count
+                        stop = _usage.get("stop_reason", "end_turn")
+                        has_tc = _usage.get("has_tool_calls", False)
+                        resp_text = _usage.get("response_text", "")
+
+                        if _should_auto_continue(body, comp_tokens, stop, has_tc) and ac_attempt < ac_max_retries:
+                            ac_attempt += 1
+                            logger.warning(
+                                f"[AutoContinue] Lazy response detected: {comp_tokens} tokens, "
+                                f"stop={stop}, no tool_calls (msgs={len(body.get('messages',[]))}, "
+                                f"tools={len(body.get('tools',[]))}). "
+                                f"Retrying {ac_attempt}/{ac_max_retries}..."
+                            )
+                            # Modify body with continue nudge and retry
+                            body = _build_continue_body(body, resp_text)
+                            msg_id = f"msg_{uuid.uuid4().hex[:24]}"
+                            attempt = 0  # reset HTTP retry counter for the new request
+                            continue  # restart the while loop with modified body
+                        else:
+                            # Not lazy or max retries reached — flush buffered chunks
+                            for bc in buffered_chunks:
+                                yield bc
+
                     store.finalize_request(cur_id, cur_name, cur_model, "success", preview, int((time.time() - t0) * 1000), _usage.get("prompt_tokens", 0), _usage.get("completion_tokens", 0))
                     return
                 except httpx.ReadTimeout:
@@ -1182,8 +1318,11 @@ async def messages(request: Request):
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
         )
 
-    # Non-streaming — retry loop
-    for attempt in range(1, MAX_RETRIES + 1):
+    # Non-streaming — retry loop with auto-continue
+    ac_attempt = 0  # auto-continue attempt counter
+    attempt = 0
+    while attempt < MAX_RETRIES:
+        attempt += 1
         cur_account = account if attempt == 1 else store.pick_account()
         if not cur_account:
             raise HTTPException(status_code=503, detail="No active accounts")
@@ -1199,7 +1338,7 @@ async def messages(request: Request):
         _dbg = os.environ.get("DEBUG_REQUESTS", "").lower() in ("1", "true")
         if _dbg:
             msgs_summary = [{"role": m.get("role"), "content_len": len(str(m.get("content",""))), "has_tool_calls": bool(m.get("tool_calls"))} for m in cur_body.get("messages", [])]
-            logger.info(f"[DEBUG] → {cur_model} | stream=False | msgs={len(msgs_summary)} | tools={len(cur_body.get('tools',[]))} | {msgs_summary[-2:]}")
+            logger.info(f"[DEBUG] → {cur_model} | stream=False | msgs={len(msgs_summary)} | tools={len(cur_body.get('tools',[]))} | ac_attempt={ac_attempt} | {msgs_summary[-2:]}")
 
         if cur_proxy and cur_proxy not in _proxy_clients:
             _proxy_clients[cur_proxy] = httpx.AsyncClient(
@@ -1245,28 +1384,50 @@ async def messages(request: Request):
             raise HTTPException(status_code=502, detail=f"Proxy error: {exc}")
 
         if resp.status_code != 200:
-            store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP {resp.status_code}", int((time.time() - t0) * 1000), is_error=True)
+            err_body = resp.text
+            store.finalize_request(cur_id, cur_name, cur_model, "error", f"HTTP {resp.status_code}: {err_body[:80]}", int((time.time() - t0) * 1000), is_error=True)
             if _is_retryable(resp.status_code) and attempt < MAX_RETRIES:
                 logger.warning(f"Retrying after HTTP {resp.status_code} (attempt {attempt}/{MAX_RETRIES})")
                 await asyncio.sleep(1)
                 continue
-            raise HTTPException(status_code=resp.status_code, detail=f"iFlow error: {resp.text}")
+            raise HTTPException(status_code=resp.status_code, detail=err_body)
 
         try:
             openai_resp = resp.json()
-            if _dbg:
-                finish = openai_resp.get("choices", [{}])[0].get("finish_reason")
-                usage_dbg = openai_resp.get("usage", {})
-                logger.info(f"[DEBUG] ← {cur_model} | stream=False | finish={finish} | usage={usage_dbg}")
-            anthropic_resp = _parse_openai_response(openai_resp, cur_model)
+            finish = openai_resp.get("choices", [{}])[0].get("finish_reason", "stop")
             usage = openai_resp.get("usage", {})
-            store.finalize_request(cur_id, cur_name, cur_model, "success", preview, int((time.time() - t0) * 1000), usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+            comp_tokens = usage.get("completion_tokens", 0)
+            has_tc = bool(openai_resp.get("choices", [{}])[0].get("message", {}).get("tool_calls"))
+            stop_reason = "end_turn" if finish == "stop" else ("tool_use" if finish == "tool_calls" else finish)
+
+            if _dbg:
+                logger.info(f"[DEBUG] ← {cur_model} | stream=False | finish={finish} | usage={usage} | ac_attempt={ac_attempt}")
+
+            # ── Auto-continue check ──
+            resp_text = (openai_resp.get("choices", [{}])[0].get("message", {}).get("content") or "")
+            if _should_auto_continue(body, comp_tokens, stop_reason, has_tc) and ac_attempt < ac_max_retries:
+                ac_attempt += 1
+                logger.warning(
+                    f"[AutoContinue] Lazy non-stream detected: {comp_tokens} tokens, "
+                    f"stop={stop_reason}, no tool_calls "
+                    f"(msgs={len(body.get('messages', []))}, tools={len(body.get('tools', []))}). "
+                    f"Retrying {ac_attempt}/{ac_max_retries}..."
+                )
+                body = _build_continue_body(body, resp_text)
+                attempt = 0  # reset so while loop restarts from attempt=1
+                continue
+
+            if ac_attempt > 0:
+                logger.info(f"[AutoContinue] Retry {ac_attempt} succeeded: {comp_tokens} tokens, stop={stop_reason}")
+
+            anthropic_resp = _parse_openai_response(openai_resp, cur_model)
+            store.finalize_request(cur_id, cur_name, cur_model, "success", preview, int((time.time() - t0) * 1000), usage.get("prompt_tokens", 0), comp_tokens)
             return JSONResponse(content=anthropic_resp)
+        except HTTPException:
+            raise
         except Exception as exc:
             store.finalize_request(cur_id, cur_name, cur_model, "error", f"Parse error: {str(exc)[:60]}", int((time.time() - t0) * 1000), is_error=True)
             raise HTTPException(status_code=502, detail=f"Parse error: {exc}")
-
-    raise HTTPException(status_code=502, detail="All retry attempts failed")
 
 
 # ============================================================

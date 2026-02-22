@@ -54,6 +54,13 @@ DEFAULT_DATA = {
             "use_qwen_pool": False,
             "qwen_vision_model": "vision-model",
         },
+        "auto_continue": {
+            "enabled": False,
+            "token_threshold": 80,
+            "max_retries": 3,
+            "only_with_tools": True,
+            "message": "You stopped without using any tools. Continue and complete the task by actually calling the appropriate tools. Do not just describe what you would do - do it.",
+        },
     },
     "stats": {"total_requests": 0, "total_errors": 0, "start_time": None},
     "logs": [],
@@ -533,6 +540,10 @@ def update_settings(**kwargs) -> dict:
                 if "vision" not in d["settings"]:
                     d["settings"]["vision"] = {}
                 d["settings"]["vision"].update(v)
+            elif k == "auto_continue" and isinstance(v, dict):
+                if "auto_continue" not in d["settings"]:
+                    d["settings"]["auto_continue"] = {}
+                d["settings"]["auto_continue"].update(v)
         _write(d)
         return d["settings"]
 
@@ -607,6 +618,13 @@ def get_vision_settings() -> dict:
     default = DEFAULT_DATA["settings"]["vision"].copy()
     v = get_settings().get("vision", {})
     default.update(v)
+    return default
+
+
+def get_auto_continue_settings() -> dict:
+    default = DEFAULT_DATA["settings"]["auto_continue"].copy()
+    ac = get_settings().get("auto_continue", {})
+    default.update(ac)
     return default
 
 
