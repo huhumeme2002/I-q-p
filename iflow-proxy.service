@@ -1,0 +1,16 @@
+[Unit]
+Description=iFlow Proxy for Claude Code
+After=network.target
+
+[Service]
+Type=simple
+User=iflow
+Group=iflow
+WorkingDirectory=/opt/iflow
+ExecStart=/opt/iflow/venv/bin/python proxy.py
+Restart=always
+RestartSec=5
+Environment=DATA_FILE=/opt/iflow/data.json
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iFlow Proxy Admin</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f1117;--s:#1a1d27;--s2:#22263a;--b:#2e3350;--a:#6c63ff;--a2:#00d4aa;--r:#ff4d6d;--t:#e2e8f0;--m:#8892a4}
+body{background:var(--bg);color:var(--t);font:14px 'Segoe UI',sans-serif;display:flex;min-height:100vh}
+nav{width:200px;background:var(--s);border-right:1px solid var(--b);padding:20px 0;position:fixed;top:0;left:0;height:100vh}
+.logo{padding:0 16px 20px;border-bottom:1px solid var(--b);margin-bottom:12px}
+.logo h1{font-size:17px;font-weight:700;background:linear-gradient(135deg,var(--a),var(--a2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo p{color:var(--m);font-size:11px;margin-top:2px}
+.ni{display:flex;align-items:center;gap:8px;padding:9px 16px;cursor:pointer;color:var(--m);border-left:3px solid transparent;transition:.15s}
+.ni:hover{color:var(--t);background:var(--s2)}
+.ni.on{color:var(--a);border-left-color:var(--a);background:rgba(108,99,255,.08)}
+main{margin-left:200px;padding:28px;flex:1;min-width:0}
+.sec{display:none}.sec.on{display:block}
+h2{font-size:19px;font-weight:700;margin-bottom:20px}
+.card{background:var(--s);border:1px solid var(--b);border-radius:10px;padding:18px;margin-bottom:14px}
+.ct{font-size:11px;font-weight:600;color:var(--m);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:20px}
+.sc{background:var(--s);border:1px solid var(--b);border-radius:10px;padding:18px;text-align:center}
+.sv{font-size:28px;font-weight:700;background:linear-gradient(135deg,var(--a),var(--a2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sl{color:var(--m);font-size:11px;margin-top:3px}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:.15s}
+.bp{background:var(--a);color:#fff}.bp:hover{background:#5a52e0}
+.br{background:var(--r);color:#fff}.br:hover{background:#e0334d}
+.bg{background:var(--s2);color:var(--t);border:1px solid var(--b)}.bg:hover{background:var(--b)}
+.bs{padding:4px 9px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.fg{margin-bottom:14px}
+.fl{display:block;font-size:11px;font-weight:600;color:var(--m);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
+.fi{width:100%;background:var(--s2);border:1px solid var(--b);border-radius:6px;padding:8px 11px;color:var(--t);font-size:13px;outline:none;transition:border-color .15s}
+.fi:focus{border-color:var(--a)}.fi::placeholder{color:var(--m)}
+select.fi{cursor:pointer}textarea.fi{resize:vertical;min-height:80px;font-family:inherit}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:9px 11px;font-size:11px;font-weight:600;color:var(--m);text-transform:uppercase;border-bottom:1px solid var(--b)}
+td{padding:11px;border-bottom:1px solid var(--b);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.02)}
+.bx{display:inline-flex;align-items:center;padding:2px 7px;border-radius:20px;font-size:11px;font-weight:600}
+.bg2{background:rgba(0,212,170,.15);color:var(--a2)}
+.br2{background:rgba(255,77,109,.15);color:var(--r)}
+.ba{background:rgba(108,99,255,.15);color:var(--a)}
+.tg{position:relative;display:inline-block;width:34px;height:19px}
+.tg input{opacity:0;width:0;height:0}
+.ts{position:absolute;cursor:pointer;inset:0;background:var(--b);border-radius:20px;transition:.2s}
+.ts:before{content:'';position:absolute;width:13px;height:13px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+input:checked+.ts{background:var(--a)}
+input:checked+.ts:before{transform:translateX(15px)}
+.le{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--b);font-size:12px}
+.le:last-child{border-bottom:none}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dg{background:var(--a2);box-shadow:0 0 5px var(--a2)}.dr{background:var(--r)}
+.ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+.ov.on{display:flex}
+.mo{background:var(--s);border:1px solid var(--b);border-radius:10px;padding:26px;width:460px;max-width:95vw}
+.mt{font-size:15px;font-weight:700;margin-bottom:18px}
+.mf{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+.tc{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:7px}
+.toast{background:var(--s2);border:1px solid var(--b);border-radius:8px;padding:11px 15px;font-size:13px;min-width:220px;animation:si .2s ease;display:flex;align-items:center;gap:7px}
+.toast.ok{border-left:3px solid var(--a2)}.toast.err{border-left:3px solid var(--r)}
+@keyframes si{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+.empty{text-align:center;padding:40px;color:var(--m)}
+.empty .ic{font-size:36px;margin-bottom:10px}
+code{background:var(--s2);padding:2px 5px;border-radius:4px;font-family:monospace;font-size:12px;color:var(--a2)}
+.row{display:flex;align-items:center;gap:8px}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+pre{background:var(--s2);padding:14px;border-radius:8px;font-family:monospace;font-size:12px;color:var(--a2);overflow-x:auto;line-height:1.8;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<nav>
+  <div class="logo"><h1>&#9889; iFlow Proxy</h1><p>Claude Code Bridge</p></div>
+  <div class="ni on" onclick="go('dash',this)">&#128202; Dashboard</div>
+  <div class="ni" onclick="go('keys',this)">&#128273; API Keys</div>
+  <div class="ni" onclick="go('mdl',this)">&#129302; Models</div>
+  <div class="ni" onclick="go('cfg',this)">&#9881; Settings</div>
+  <div class="ni" onclick="go('pool',this)">&#127760; Proxy Pool</div>
+  <div class="ni" onclick="go('reg',this)">&#128221; Registration</div>
+  <div class="ni" onclick="go('log',this)">&#128203; Logs</div>
+</nav>
+<main>
+
+<!-- Dashboard -->
+<div id="sec-dash" class="sec on">
+  <div class="row" style="justify-content:space-between;margin-bottom:20px">
+    <h2 style="margin:0">&#128202; Dashboard</h2>
+    <div class="row" style="gap:8px">
+      <span id="d-refresh-status" style="font-size:11px;color:var(--m)"></span>
+      <button class="btn bg bs" onclick="loadDash()">&#8635; Refresh</button>
+    </div>
+  </div>
+  <div class="grid4">
+    <div class="sc"><div class="sv" id="d-req">0</div><div class="sl">Requests</div></div>
+    <div class="sc"><div class="sv" id="d-err">0</div><div class="sl">Errors</div></div>
+    <div class="sc"><div class="sv" id="d-acc">0</div><div class="sl">Active Keys</div></div>
+    <div class="sc"><div class="sv" id="d-prov" style="font-size:14px;padding-top:6px">—</div><div class="sl">Provider</div></div>
+    <div class="sc"><div class="sv" id="d-mdl" style="font-size:14px;padding-top:6px">—</div><div class="sl">Model</div></div>
+    <div class="sc"><div class="sv" id="d-in-tok" style="font-size:14px;padding-top:6px">0</div><div class="sl">Input Tokens</div></div>
+    <div class="sc"><div class="sv" id="d-out-tok" style="font-size:14px;padding-top:6px">0</div><div class="sl">Output Tokens</div></div>
+    <div class="sc" style="cursor:pointer" onclick="resetAllTokens()"><div class="sv" style="font-size:20px">&#x1F5D1;</div><div class="sl">Reset Tokens</div></div>
+  </div>
+  <div class="card">
+    <div class="ct">Claude Code Setup (~/.claude/settings.json)</div>
+    <pre id="d-code"></pre>
+  </div>
+  <div class="card">
+    <div class="ct">Recent Activity</div>
+    <div id="d-logs"><div class="empty"><div class="ic">&#128237;</div>No activity yet</div></div>
+  </div>
+</div>
+
+<!-- API Keys -->
+<div id="sec-keys" class="sec">
+  <div class="row" style="justify-content:space-between;margin-bottom:20px">
+    <h2 style="margin:0">&#128273; API Keys</h2>
+    <div class="row" style="gap:10px">
+      <div class="row" style="gap:6px;background:var(--s);border:1px solid var(--b);border-radius:8px;padding:4px">
+        <button class="btn bs" id="prov-iflow" onclick="setProvider('iflow')" style="border-radius:6px">iFlow</button>
+        <button class="btn bs" id="prov-qwen" onclick="setProvider('qwen')" style="border-radius:6px">Qwen</button>
+      </div>
+      <button class="btn bp" onclick="openAdd()">+ Add Key</button>
+    </div>
+  </div>
+
+  <!-- iFlow accounts -->
+  <div id="keys-iflow">
+    <div class="card">
+      <div class="ct">iFlow Accounts</div>
+      <div id="k-tbl-iflow"><div class="empty"><div class="ic">&#128273;</div>No iFlow keys yet</div></div>
+    </div>
+  </div>
+
+  <!-- Qwen accounts -->
+  <div id="keys-qwen" style="display:none">
+    <div class="card" style="margin-bottom:14px">
+      <div class="ct">Qwen Model</div>
+      <div class="row" style="gap:8px;margin-bottom:8px">
+        <select id="qwen-model-sel" class="fi" style="flex:1"></select>
+        <button class="btn bp bs" onclick="saveQwenModel()">Save</button>
+      </div>
+      <div class="row" style="gap:8px">
+        <input type="text" id="qwen-model-new" class="fi" placeholder="Add model e.g. qwen3-coder-turbo" style="flex:1">
+        <button class="btn bg bs" onclick="addQwenModel()">Add</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ct">Qwen Accounts</div>
+      <div id="k-tbl-qwen"><div class="empty"><div class="ic">&#128273;</div>No Qwen keys yet</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Models -->
+<div id="sec-mdl" class="sec">
+  <h2>&#129302; Models</h2>
+  <div class="card" style="margin-bottom:14px">
+    <div class="ct">Add Model</div>
+    <div class="row"><input type="text" id="m-new" class="fi" placeholder="e.g. glm-4-plus" style="flex:1"><button class="btn bp" onclick="addModel()">Add</button></div>
+  </div>
+  <div class="card"><div class="ct">Available Models</div><div id="m-list"></div></div>
+</div>
+
+<!-- Settings -->
+<div id="sec-cfg" class="sec">
+  <h2>&#9881; Settings</h2>
+  <div class="card">
+    <div class="ct">General</div>
+    <div class="fg"><label class="fl">Upstream URL</label><input type="text" id="c-url" class="fi" placeholder="https://apis.iflow.cn/v1/chat/completions"></div>
+    <div class="fr">
+      <div class="fg"><label class="fl">Port</label><input type="number" id="c-port" class="fi" placeholder="8083"></div>
+      <div class="fg"><label class="fl">Load Balance</label>
+        <select id="c-lb" class="fi"><option value="round_robin">Round Robin</option><option value="least_requests">Least Requests</option><option value="random">Random</option></select>
+      </div>
+    </div>
+    <div class="fg">
+      <label class="fl" style="display:flex;align-items:center;gap:10px">Enable Thinking
+        <label class="tg"><input type="checkbox" id="c-think"><span class="ts"></span></label>
+      </label>
+      <p style="color:var(--m);font-size:12px;margin-top:5px">Sends enable_thinking:true to iFlow API</p>
+    </div>
+    <div class="fg"><label class="fl">Global System Prompt</label><textarea id="c-sys" class="fi" rows="4" placeholder="Optional override for all system prompts"></textarea></div>
+    <div class="fg"><label class="fl">Prompt Mode</label>
+      <select id="c-pm" class="fi"><option value="prepend">Prepend</option><option value="append">Append</option><option value="replace">Replace</option></select>
+    </div>
+    <button class="btn bp" onclick="saveCfg()">Save Settings</button>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="ct" style="display:flex;align-items:center;justify-content:space-between">
+      <span>&#128247; Vision Fallback</span>
+      <label class="tg"><input type="checkbox" id="v-enabled" onchange="toggleVisionFields()"><span class="ts"></span></label>
+    </div>
+    <p style="color:var(--m);font-size:12px;margin-bottom:14px">When enabled, images sent by the user are automatically described by a vision model and the description is passed as text to the main model.</p>
+    <div id="v-fields">
+      <div class="fr" style="align-items:center;margin-bottom:10px">
+        <label class="fl" style="margin:0">Use Qwen Pool for Vision</label>
+        <label class="tg" style="margin-left:auto"><input type="checkbox" id="v-qwen-pool" onchange="toggleVisionPool()"><span class="ts"></span></label>
+      </div>
+      <div id="v-iflow-fields">
+        <div class="fr">
+          <div class="fg"><label class="fl">Vision Model</label><input type="text" id="v-model" class="fi" placeholder="glm-4v-plus"></div>
+          <div class="fg"><label class="fl">Vision API Key <span style="color:var(--m);font-weight:400">(empty = use first account)</span></label><input type="text" id="v-key" class="fi" placeholder="sk-... (leave empty to reuse main key)"></div>
+        </div>
+        <div class="fg"><label class="fl">Vision Upstream URL <span style="color:var(--m);font-weight:400">(empty = use global)</span></label><input type="text" id="v-url" class="fi" placeholder="https://apis.iflow.cn/v1/chat/completions"></div>
+      </div>
+      <div id="v-qwen-fields" style="display:none">
+        <div class="fg"><label class="fl">Qwen Vision Model</label><input type="text" id="v-qwen-model" class="fi" placeholder="vision-model"></div>
+      </div>
+      <div class="fg"><label class="fl">Vision Prompt</label><textarea id="v-prompt" class="fi" rows="3" placeholder="Please describe this image in detail..."></textarea></div>
+    </div>
+    <button class="btn bp" onclick="saveVision()" style="margin-top:4px">Save Vision Settings</button>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="ct">&#128274; Admin Password</div>
+    <p style="color:var(--m);font-size:12px;margin-bottom:12px">Protect the admin panel and API. Leave empty to disable auth. Set via <code>ADMIN_PASSWORD</code> env var to override.</p>
+    <div class="fr">
+      <div class="fg"><label class="fl">New Password</label><input type="password" id="c-pw" class="fi" placeholder="Leave empty to remove password"></div>
+      <div class="fg"><label class="fl">Confirm Password</label><input type="password" id="c-pw2" class="fi" placeholder="Repeat password"></div>
+    </div>
+    <div id="c-pw-status" style="font-size:12px;color:var(--m);margin-bottom:10px"></div>
+    <button class="btn bp" onclick="saveAdminPassword()">Set Password</button>
+  </div>
+</div>
+
+<!-- Registration -->
+<div id="sec-reg" class="sec">
+  <h2>&#128221; Registration</h2>
+
+  <!-- Accounts input -->
+  <div class="card">
+    <div class="ct">Add Google Accounts <span style="font-weight:400;text-transform:none">(email|password, one per line)</span></div>
+    <textarea id="r-input" class="fi" rows="5" placeholder="email1@gmail.com|password1&#10;email2@gmail.com|password2"></textarea>
+    <div class="row" style="margin-top:10px;gap:8px">
+      <button class="btn bp" onclick="addRegAccounts()">Add Accounts</button>
+      <button class="btn br bs" onclick="clearRegAccounts()">Clear All</button>
+    </div>
+  </div>
+
+  <!-- Proxy config -->
+  <div class="card">
+    <div class="ct" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Proxies (<span id="r-pcount">0</span>)</span>
+      <button class="btn br bs" onclick="clearRegProxies()">Clear All</button>
+    </div>
+    <div class="fg" style="margin-top:8px">
+      <label class="fl">Import Proxies <span style="font-weight:400;text-transform:none">(ip:port:user:pass|rotate_url, one per line)</span></label>
+      <textarea id="r-proxy-input" class="fi" rows="3" placeholder="180.93.2.171:3129:username:password|https://rotate-api.com/rotate?token=abc&#10;103.1.2.3:8080:user2:pass2|https://rotate-api.com/rotate?token=xyz"></textarea>
+    </div>
+    <button class="btn bp bs" onclick="importRegProxies()">Import Proxies</button>
+    <div id="r-proxies" style="margin-top:12px"></div>
+  </div>
+
+  <!-- Control panel -->
+  <div class="card">
+    <div class="ct" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Accounts Queue (<span id="r-count">0</span>)</span>
+      <div class="row" style="gap:8px">
+        <label class="tg" title="Use proxy"><input type="checkbox" id="r-proxy"><span class="ts"></span></label>
+        <span style="font-size:11px;color:var(--m)">Proxy</span>
+        <label class="tg" title="Headless mode (no browser window)"><input type="checkbox" id="r-headless" checked onchange="saveHeadless()"><span class="ts"></span></label>
+        <span style="font-size:11px;color:var(--m)">Headless</span>
+        <label style="font-size:11px;color:var(--m);display:flex;align-items:center;gap:4px">Workers
+          <input type="number" id="r-workers" class="fi" value="1" min="1" max="10" style="width:50px;padding:4px 6px;font-size:12px">
+        </label>
+        <button class="btn bp bs" id="r-start" onclick="startReg()">Start</button>
+        <button class="btn br bs" id="r-stop" onclick="stopReg()" style="display:none">Stop</button>
+      </div>
+    </div>
+    <div id="r-queue"><div class="empty"><div class="ic">&#128221;</div>No accounts in queue</div></div>
+  </div>
+
+  <!-- Results -->
+  <div class="card">
+    <div class="ct" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Results</span>
+      <button class="btn bg bs" onclick="clearRegResults()">Clear</button>
+    </div>
+    <div id="r-results"><div class="empty"><div class="ic">&#128273;</div>No results yet</div></div>
+  </div>
+
+  <!-- Live log -->
+  <div class="card" id="r-log-card" style="display:none">
+    <div class="ct" style="display:flex;align-items:center;justify-content:space-between">
+      <span>&#128196; Live Log</span>
+      <button class="btn bg bs" onclick="clearRegLog()">Clear</button>
+    </div>
+    <pre id="r-log" style="max-height:300px;overflow-y:auto;font-size:11px;line-height:1.6"></pre>
+  </div>
+
+</div>
+
+<!-- Proxy Pool -->
+<div id="sec-pool" class="sec">
+  <h2>&#127760; Proxy Pool</h2>
+  <div class="card">
+    <div class="ct" style="display:flex;align-items:center;justify-content:space-between">
+      <span>HTTP/SOCKS5 Proxy Pool (<span id="p-count">0</span>)</span>
+      <div class="row" style="gap:8px">
+        <label style="font-size:11px;color:var(--m);display:flex;align-items:center;gap:4px">Max/proxy
+          <input type="number" id="p-max" class="fi" value="1" min="1" max="50" style="width:50px;padding:4px 6px;font-size:12px">
+        </label>
+        <button class="btn bg bs" onclick="savePoolMax()">Save</button>
+        <button class="btn bp bs" onclick="reassignAllProxies()">Reassign All</button>
+        <button class="btn br bs" onclick="clearPool()">Clear All</button>
+      </div>
+    </div>
+    <p style="color:var(--m);font-size:12px;margin:8px 0">Proxies are auto-assigned to new accounts (iFlow + Qwen share 1 slot). Deleting an account releases its slot.</p>
+    <!-- Import tabs -->
+    <div style="display:flex;gap:0;margin-bottom:0;border-bottom:2px solid var(--b2)">
+      <button id="ptab-socks5" onclick="switchPTab('socks5')" style="padding:6px 16px;border:none;background:var(--bp);color:#fff;border-radius:6px 6px 0 0;cursor:pointer;font-size:13px;font-weight:600">SOCKS5</button>
+      <button id="ptab-http" onclick="switchPTab('http')" style="padding:6px 16px;border:none;background:var(--b2);color:var(--t);border-radius:6px 6px 0 0;cursor:pointer;font-size:13px;margin-left:4px">HTTP</button>
+    </div>
+    <div id="ptab-socks5-body" class="fg" style="margin-top:8px">
+      <label class="fl">Import SOCKS5 Proxies <span style="font-weight:400;text-transform:none">(ip:port:user:pass, one per line)</span></label>
+      <textarea id="p-input-socks5" class="fi" rows="4" placeholder="171.241.62.192:49905:olivia627:ntk2otm1mty3&#10;103.1.2.3:1080:user2:pass2"></textarea>
+    </div>
+    <div id="ptab-http-body" class="fg" style="margin-top:8px;display:none">
+      <label class="fl">Import HTTP Proxies <span style="font-weight:400;text-transform:none">(ip:port:user:pass, one per line)</span></label>
+      <textarea id="p-input-http" class="fi" rows="4" placeholder="14.224.147.195:46042:v3-1042-127220:RIONQ&#10;103.1.2.3:8080:user2:pass2"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn bp bs" onclick="importPool()">Import</button>
+      <button class="btn bg bs" onclick="checkAllProxies()">Check All</button>
+    </div>
+    <div id="p-list" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<!-- Logs -->
+<div id="sec-log" class="sec">
+  <div class="row" style="justify-content:space-between;margin-bottom:20px">
+    <h2 style="margin:0">&#128203; Logs</h2>
+    <button class="btn bg bs" onclick="clearLogs()">Clear</button>
+  </div>
+  <div class="card"><div id="l-list"><div class="empty"><div class="ic">&#128237;</div>No logs yet</div></div></div>
+</div>
+
+</main>
+
+<!-- Add Key Modal -->
+<div class="ov" id="ov-add">
+  <div class="mo">
+    <div class="mt">Add API Key</div>
+    <div class="fg"><label class="fl">Provider</label>
+      <select id="a-provider" class="fi" onchange="onProviderChange()">
+        <option value="iflow">iFlow</option>
+        <option value="qwen">Qwen</option>
+      </select>
+    </div>
+    <div id="a-iflow-fields">
+      <div class="fg"><label class="fl">Name</label><input type="text" id="a-name" class="fi" placeholder="My iFlow Key"></div>
+      <div class="fg"><label class="fl">API Key *</label><input type="text" id="a-key" class="fi" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></div>
+      <div class="fg"><label class="fl">Upstream URL (optional)</label><input type="text" id="a-url" class="fi" placeholder="Leave empty to use global"></div>
+      <div class="fg"><label class="fl">Proxy (optional)</label><input type="text" id="a-proxy" class="fi" placeholder="http://user:pass@host:port or socks5://..."></div>
+    </div>
+    <div id="a-qwen-fields" style="display:none">
+      <p style="color:var(--m);font-size:13px;margin:8px 0">Authenticate via Qwen OAuth device flow:</p>
+      <button class="btn bp" onclick="startQwenLogin()" id="a-qwen-btn">Login with Qwen</button>
+      <div id="a-qwen-status" style="margin-top:10px;font-size:13px;color:var(--m)"></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg" onclick="closeOv('ov-add')">Cancel</button>
+      <button class="btn bp" onclick="addKey()" id="a-add-btn">Add Key</button>
+    </div>
+  </div>
+</div>
+
+<div class="tc" id="tc"></div>
+
+<!-- Edit Account Modal -->
+<div class="ov" id="ov-edit">
+  <div class="mo">
+    <div class="mt">Edit Account</div>
+    <input type="hidden" id="e-id">
+    <div class="fg"><label class="fl">Name</label><input type="text" id="e-name" class="fi"></div>
+    <div class="fg"><label class="fl">API Key</label><input type="text" id="e-key" class="fi" placeholder="Leave blank to keep current"></div>
+    <div class="fg"><label class="fl">Upstream URL (optional)</label><input type="text" id="e-url" class="fi" placeholder="Leave empty to use global"></div>
+    <div class="fg"><label class="fl">Proxy (optional)</label><input type="text" id="e-proxy" class="fi" placeholder="http://user:pass@host:port or socks5://..."></div>
+    <div class="mf">
+      <button class="btn bg" onclick="closeOv('ov-edit')">Cancel</button>
+      <button class="btn bp" onclick="saveEditKey()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var _dashInterval = null;
+var _keysInterval = null;
+var _logInterval = null;
+
+function go(name, el) {
+  document.querySelectorAll('.sec').forEach(function(s){s.classList.remove('on')});
+  document.querySelectorAll('.ni').forEach(function(n){n.classList.remove('on')});
+  document.getElementById('sec-'+name).classList.add('on');
+  el.classList.add('on');
+  // Stop dashboard auto-refresh when leaving dashboard
+  if(name !== 'dash' && _dashInterval){clearInterval(_dashInterval);_dashInterval=null;}
+  if(name !== 'keys' && _keysInterval){clearInterval(_keysInterval);_keysInterval=null;}
+  if(name !== 'log' && _logInterval){clearInterval(_logInterval);_logInterval=null;}
+  var fn = {dash:loadDash, keys:loadKeys, mdl:loadMdl, cfg:loadCfg, pool:loadPool, reg:loadReg, log:loadLog};
+  if(fn[name]) fn[name]();
+}
+
+function toast(msg, type) {
+  var el = document.createElement('div');
+  el.className = 'toast '+(type==='err'?'err':'ok');
+  el.innerHTML = (type==='err'?'&#10060;':'&#9989;')+' '+msg;
+  document.getElementById('tc').appendChild(el);
+  setTimeout(function(){el.remove()}, 3000);
+}
+
+function onProviderChange(){
+  var p=document.getElementById('a-provider').value;
+  document.getElementById('a-iflow-fields').style.display=p==='iflow'?'':'none';
+  document.getElementById('a-qwen-fields').style.display=p==='qwen'?'':'none';
+  document.getElementById('a-add-btn').style.display=p==='iflow'?'':'none';
+  document.getElementById('a-qwen-status').innerHTML='';
+}
+function openAdd(){
+  ['a-name','a-key','a-url','a-proxy'].forEach(function(id){document.getElementById(id).value=''});
+  document.getElementById('a-provider').value=_activeProvider;
+  onProviderChange();
+  document.getElementById('ov-add').classList.add('on');
+}
+function closeOv(id){document.getElementById(id).classList.remove('on')}
+
+var _dashCountdown = 30;
+var _dashCountdownTimer = null;
+
+function _startDashAutoRefresh() {
+  if(_dashInterval) return;
+  _dashCountdown = 30;
+  _dashCountdownTimer = setInterval(function(){
+    _dashCountdown--;
+    var el = document.getElementById('d-refresh-status');
+    if(el) el.textContent = 'Auto-refresh in '+_dashCountdown+'s';
+    if(_dashCountdown <= 0){
+      _dashCountdown = 30;
+      loadDash();
+    }
+  }, 1000);
+  _dashInterval = _dashCountdownTimer;
+}
+
+async function loadDash() {
+  _dashCountdown = 30;
+  try {
+    var r = await Promise.all([
+      fetch('/api/stats').then(function(x){return x.json()}),
+      fetch('/api/logs').then(function(x){return x.json()}),
+      fetch('/api/models').then(function(x){return x.json()}),
+      fetch('/api/accounts').then(function(x){return x.json()}),
+      fetch('/api/settings').then(function(x){return x.json()}),
+      fetch('/api/provider').then(function(x){return x.json()})
+    ]);
+    var st=r[0], lg=r[1], md=r[2], ac=r[3], cfg=r[4], prov=r[5];
+    var activeProv=prov.active_provider||'iflow';
+    var activeModel=activeProv==='qwen'?(prov.qwen_default_model||'qwen3-coder-plus'):(md.default_model||'glm-4.7');
+    var activeAcc=ac.filter(function(a){return a.enabled && (a.provider||'iflow')===activeProv});
+    document.getElementById('d-req').textContent = st.total_requests||0;
+    document.getElementById('d-err').textContent = st.total_errors||0;
+    document.getElementById('d-acc').textContent = activeAcc.length;
+    document.getElementById('d-prov').textContent = activeProv.toUpperCase();
+    document.getElementById('d-mdl').textContent = activeModel;
+    document.getElementById('d-in-tok').textContent = fmtTokens(st.total_input_tokens||0);
+    document.getElementById('d-out-tok').textContent = fmtTokens(st.total_output_tokens||0);
+    var p=cfg.port||8083, m=activeModel;
+    document.getElementById('d-code').textContent =
+      '"env": {\n  "ANTHROPIC_AUTH_TOKEN": "dummy",\n  "ANTHROPIC_BASE_URL": "http://localhost:'+p+'",\n'+
+      '  "ANTHROPIC_DEFAULT_OPUS_MODEL": "'+m+'",\n  "ANTHROPIC_DEFAULT_SONNET_MODEL": "'+m+'",\n'+
+      '  "ANTHROPIC_DEFAULT_HAIKU_MODEL": "'+m+'",\n  "CLAUDE_CODE_SUBAGENT_MODEL": "'+m+'",\n'+
+      '  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",\n  "API_TIMEOUT_MS": "3000000"\n}';
+    var el=document.getElementById('d-logs');
+    if(!lg.length){el.innerHTML='<div class="empty"><div class="ic">&#128237;</div>No activity yet</div>';}
+    else el.innerHTML=lg.slice(0,10).map(function(l){
+      return '<div class="le"><span class="dot '+(l.status==='success'?'dg':'dr')+'"></span>'+
+        '<span style="color:var(--m);font-family:monospace;white-space:nowrap">'+new Date(l.timestamp).toLocaleTimeString()+'</span>'+
+        '<span class="bx '+(l.status==='success'?'bg2':'br2')+'">'+l.status+'</span>'+
+        '<span style="color:var(--m);font-size:12px;font-family:monospace">'+l.model+'</span>'+
+        '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(l.preview||'<em style="color:var(--m)">—</em>')+'</span>'+
+        '<span style="color:var(--m);font-family:monospace;white-space:nowrap">'+l.duration+'ms</span></div>';
+    }).join('');
+    _startDashAutoRefresh();
+  } catch(e){
+    console.error(e);
+    toast('Failed to load dashboard: '+(e.message||'network error'), 'err');
+  }
+}
+
+var _activeProvider='iflow';
+
+async function loadKeys() {
+  if(!_keysInterval) _keysInterval = setInterval(loadKeys, 10000);
+  var ac, prov, qm;
+  try {
+    var r = await Promise.all([
+      fetch('/api/accounts').then(function(x){return x.json()}),
+      fetch('/api/provider').then(function(x){return x.json()}),
+      fetch('/api/qwen-models').then(function(x){return x.json()})
+    ]);
+    ac=r[0]; prov=r[1]; qm=r[2];
+  } catch(e) {
+    var errMsg='<div class="empty"><div class="ic">&#9888;</div>Failed to load — '+(e.message||'network error')+'</div>';
+    document.getElementById('k-tbl-iflow').innerHTML=errMsg;
+    document.getElementById('k-tbl-qwen').innerHTML=errMsg;
+    return;
+  }
+  _activeProvider=prov.active_provider||'iflow';
+  updateProviderUI();
+
+  // Qwen model selector — dynamic
+  var sel=document.getElementById('qwen-model-sel');
+  var curVal=prov.qwen_default_model||'qwen3-coder-plus';
+  sel.innerHTML=(qm.models||[]).map(function(m){
+    return '<option value="'+m+'"'+(m===curVal?' selected':'')+'>'+m+'</option>';
+  }).join('');
+
+  // iFlow table
+  var iflowAcc=ac.filter(function(a){return (a.provider||'iflow')==='iflow'});
+  var el1=document.getElementById('k-tbl-iflow');
+  if(!iflowAcc.length){el1.innerHTML='<div class="empty"><div class="ic">&#128273;</div>No iFlow keys yet. Add your API key.</div>'}
+  else{el1.innerHTML=renderAccountTable(iflowAcc)}
+
+  // Qwen table
+  var qwenAcc=ac.filter(function(a){return a.provider==='qwen'});
+  var el2=document.getElementById('k-tbl-qwen');
+  if(!qwenAcc.length){el2.innerHTML='<div class="empty"><div class="ic">&#128273;</div>No Qwen keys yet. Login with Qwen OAuth.</div>'}
+  else{el2.innerHTML=renderAccountTable(qwenAcc)}
+}
+
+function fmtTokens(n){
+  if(!n)return '0';
+  if(n>=1e6)return (n/1e6).toFixed(1)+'M';
+  if(n>=1e3)return (n/1e3).toFixed(1)+'K';
+  return ''+n;
+}
+function fmtExpiry(ts) {
+  if(!ts) return '<em style="color:var(--m)">—</em>';
+  var diff = ts - Date.now();
+  if(diff <= 0) return '<span style="color:var(--r);font-size:11px">Expired</span>';
+  var h = Math.floor(diff/3600000);
+  var d = Math.floor(h/24);
+  if(d > 0) return '<span style="color:var(--a2);font-size:11px">'+d+'d</span>';
+  return '<span style="color:'+(h<2?'var(--r)':'var(--m)')+';font-size:11px">'+h+'h</span>';
+}
+
+function renderAccountTable(ac){
+  return '<div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>API Key</th><th>Upstream</th><th>Proxy</th><th>Req</th><th>Err</th><th>Tokens (In/Out)</th><th>Expiry</th><th>On</th><th>Actions</th></tr></thead><tbody>'+
+    ac.map(function(a){
+      var hasRefresh = !!(a.refresh_token);
+      return '<tr><td><strong>'+a.name+'</strong></td>'+
+        '<td><code class="trunc" style="max-width:220px;display:inline-block">'+mask(a.api_key)+'</code></td>'+
+        '<td><span class="trunc" style="max-width:200px;display:inline-block;color:var(--m);font-size:12px">'+(a.upstream_url||'global')+'</span></td>'+
+        '<td><span class="trunc" style="max-width:180px;display:inline-block;color:var(--m);font-size:12px">'+(a.proxy?'<span class="bx ba">'+a.proxy.split('@').pop()+'</span>':'<em style="color:var(--m)">—</em>')+'</span></td>'+
+        '<td>'+(a.request_count||0)+'</td><td>'+(a.error_count||0)+'</td>'+
+        '<td><span style="font-size:12px">'+fmtTokens(a.input_tokens)+' / '+fmtTokens(a.output_tokens)+'</span></td>'+
+        '<td>'+fmtExpiry(a.expiry_date)+'</td>'+
+        '<td><label class="tg"><input type="checkbox" '+(a.enabled?'checked':'')+' onchange="toggleKey(\''+a.id+'\')"><span class="ts"></span></label></td>'+
+        '<td><div class="row"><button class="btn bg bs" onclick="testKey(\''+a.id+'\',this)">Test</button>'+
+        (hasRefresh?'<button class="btn bg bs" onclick="refreshToken(\''+a.id+'\',this)" title="Refresh OAuth token">Refresh</button>':'')+
+        '<button class="btn bg bs" onclick="editKey(\''+a.id+'\',\''+encodeURIComponent(a.name)+'\',\''+encodeURIComponent(a.upstream_url||'')+'\',\''+encodeURIComponent(a.proxy||'')+'\')">Edit</button>'+
+        '<button class="btn bg bs" onclick="reassignProxy(\''+a.id+'\')">Proxy</button>'+
+        '<button class="btn br bs" onclick="delKey(\''+a.id+'\')">Del</button></div></td></tr>';
+    }).join('')+'</tbody></table></div>';
+}
+
+function updateProviderUI(){
+  var ib=document.getElementById('prov-iflow');
+  var qb=document.getElementById('prov-qwen');
+  if(_activeProvider==='qwen'){
+    qb.className='btn bs bp';ib.className='btn bs bg';
+    document.getElementById('keys-iflow').style.display='none';
+    document.getElementById('keys-qwen').style.display='';
+  } else {
+    ib.className='btn bs bp';qb.className='btn bs bg';
+    document.getElementById('keys-iflow').style.display='';
+    document.getElementById('keys-qwen').style.display='none';
+  }
+}
+
+async function setProvider(p){
+  _activeProvider=p;
+  updateProviderUI();
+  await fetch('/api/provider',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active_provider:p})});
+  toast('Switched to '+p.toUpperCase());
+}
+
+async function saveQwenModel(){
+  var m=document.getElementById('qwen-model-sel').value;
+  await fetch('/api/provider',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({qwen_default_model:m})});
+  toast('Qwen model set to '+m);
+}
+
+async function addQwenModel(){
+  var m=document.getElementById('qwen-model-new').value.trim();
+  if(!m){toast('Model name required','err');return}
+  var r=await fetch('/api/qwen-models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
+  if(r.ok){toast('Model added');document.getElementById('qwen-model-new').value='';loadKeys()}
+  else{var e=await r.json();toast(e.detail||'Error','err')}
+}
+
+async function resetAllTokens(){
+  if(!confirm('Reset all token usage counters?'))return;
+  await fetch('/api/tokens/reset',{method:'POST'});
+  toast('Token counters reset');
+  loadDash();loadKeys();
+}
+
+function mask(k){if(!k)return'—';if(k.length<=8)return'••••••••';return k.slice(0,5)+'•••••'+k.slice(-4)}
+
+async function addKey() {
+  var provider=document.getElementById('a-provider').value;
+  var name=document.getElementById('a-name').value.trim()||'Account';
+  var api_key=document.getElementById('a-key').value.trim();
+  var upstream_url=document.getElementById('a-url').value.trim();
+  var proxy=document.getElementById('a-proxy').value.trim();
+  if(!api_key){toast('API key required','err');return}
+  var r=await fetch('/api/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,api_key:api_key,upstream_url:upstream_url,proxy:proxy,provider:provider})});
+  if(r.ok){toast('Key added!');closeOv('ov-add');loadKeys()}
+  else{var e=await r.json();toast(e.detail||'Error','err')}
+}
+
+var _qwenSession=null;
+async function startQwenLogin(){
+  var el=document.getElementById('a-qwen-status');
+  el.textContent='Starting device flow...';
+  document.getElementById('a-qwen-btn').disabled=true;
+  try{
+    var r=await fetch('/api/auth/qwen/device',{method:'POST'});
+    if(!r.ok){var txt=await r.text();try{var e=JSON.parse(txt);txt=e.detail||txt}catch(_){}el.textContent='Error: '+txt;document.getElementById('a-qwen-btn').disabled=false;return}
+    var d=await r.json();
+    _qwenSession=d.session_id;
+    el.innerHTML='<div style="margin-bottom:8px">Open this link and authorize:</div>'+
+      '<a href="'+d.verification_uri+'" target="_blank" style="color:var(--a);word-break:break-all">'+d.verification_uri+'</a>'+
+      (d.user_code?'<div style="margin-top:6px">Code: <strong style="font-size:16px;letter-spacing:2px">'+d.user_code+'</strong></div>':'')+
+      '<div class="fg" style="margin-top:10px"><label class="fl">Your Qwen email</label>'+
+      '<input type="text" id="a-qwen-email" class="fi" placeholder="you@example.com"></div>'+
+      '<button class="btn bp" style="margin-top:6px" onclick="pollQwenToken()">I\'ve authorized — get token</button>';
+  }catch(e){el.textContent='Error: '+e.message;document.getElementById('a-qwen-btn').disabled=false}
+}
+
+async function pollQwenToken(){
+  var email=(document.getElementById('a-qwen-email')||{}).value||'';
+  if(!email.trim()){toast('Email required','err');return}
+  var el=document.getElementById('a-qwen-status');
+  el.innerHTML='<div>Polling for token (this may take up to 5 min)...</div>';
+  try{
+    var r=await fetch('/api/auth/qwen/poll',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session_id:_qwenSession,email:email.trim()})});
+    var txt=await r.text();var d;try{d=JSON.parse(txt)}catch(_){el.textContent='Error: '+txt;document.getElementById('a-qwen-btn').disabled=false;return}
+    if(d.ok){toast('Qwen account added!');closeOv('ov-add');loadKeys()}
+    else{el.textContent='Failed: '+(d.detail||JSON.stringify(d));document.getElementById('a-qwen-btn').disabled=false}
+  }catch(e){el.textContent='Error: '+e.message;document.getElementById('a-qwen-btn').disabled=false}
+}
+
+async function delKey(id){
+  if(!confirm('Delete this key?'))return;
+  var r=await fetch('/api/accounts/'+id,{method:'DELETE'});
+  if(r.ok){toast('Deleted');loadKeys()}else toast('Error','err');
+}
+
+async function refreshToken(id, btn){
+  var orig = btn.textContent;
+  btn.textContent = '...'; btn.disabled = true;
+  try {
+    var r = await fetch('/api/accounts/'+id+'/refresh-token', {method:'POST'});
+    var d = await r.json();
+    if(r.ok){ toast('Token refreshed (expires in '+Math.round(d.expires_in/3600)+'h)'); loadKeys(); }
+    else toast(d.detail||'Refresh failed','err');
+  } catch(e){ toast('Refresh failed','err'); }
+  btn.textContent = orig; btn.disabled = false;
+}
+
+async function toggleKey(id){await fetch('/api/accounts/'+id+'/toggle',{method:'POST'});loadKeys()}
+
+function editKey(id, name, url, proxy){
+  document.getElementById('e-id').value=id;
+  document.getElementById('e-name').value=decodeURIComponent(name);
+  document.getElementById('e-key').value='';
+  document.getElementById('e-url').value=decodeURIComponent(url);
+  document.getElementById('e-proxy').value=decodeURIComponent(proxy);
+  document.getElementById('ov-edit').classList.add('on');
+}
+
+async function saveEditKey(){
+  var id=document.getElementById('e-id').value;
+  var body={
+    name:document.getElementById('e-name').value.trim(),
+    upstream_url:document.getElementById('e-url').value.trim(),
+    proxy:document.getElementById('e-proxy').value.trim(),
+  };
+  var key=document.getElementById('e-key').value.trim();
+  if(key) body.api_key=key;
+  var r=await fetch('/api/accounts/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.ok){toast('Account updated');closeOv('ov-edit');loadKeys()}
+  else{var e=await r.json();toast(e.detail||'Error','err')}
+}
+
+async function testKey(id,btn){
+  btn.disabled=true;btn.textContent='...';
+  var r=await fetch('/api/accounts/'+id+'/check',{method:'POST'});
+  var d=await r.json();
+  btn.disabled=false;btn.textContent='Test';
+  if(d.status==='ok')toast(d.message);else toast(d.message,'err');
+}
+
+async function loadMdl() {
+  var d=await fetch('/api/models').then(function(x){return x.json()});
+  var el=document.getElementById('m-list');
+  if(!d.models.length){el.innerHTML='<div class="empty"><div class="ic">&#129302;</div>No models</div>';return}
+  el.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Model</th><th>Default</th><th>Action</th></tr></thead><tbody>'+
+    d.models.map(function(m){
+      return '<tr><td><code>'+m+'</code></td>'+
+        '<td>'+(m===d.default_model?'<span class="bx ba">Default</span>':'<button class="btn bg bs" onclick="setDef(\''+m+'\')">Set Default</button>')+'</td>'+
+        '<td><button class="btn br bs" onclick="delMdl(\''+m+'\')" '+(m===d.default_model?'disabled':'')+'>Del</button></td></tr>';
+    }).join('')+'</tbody></table></div>';
+}
+
+async function addModel(){
+  var m=document.getElementById('m-new').value.trim();
+  if(!m){toast('Model name required','err');return}
+  var r=await fetch('/api/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
+  if(r.ok){toast('Model added');document.getElementById('m-new').value='';loadMdl()}
+  else{var e=await r.json();toast(e.detail||'Error','err')}
+}
+
+async function delMdl(m){
+  if(!confirm('Delete model '+m+'?'))return;
+  var r=await fetch('/api/models/'+encodeURIComponent(m),{method:'DELETE'});
+  if(r.ok){toast('Deleted');loadMdl()}else toast('Error','err');
+}
+
+async function setDef(m){
+  var r=await fetch('/api/models/default',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:m})});
+  if(r.ok){toast('Default set to '+m);loadMdl()}else toast('Error','err');
+}
+
+async function loadCfg(){
+  var r = await Promise.all([
+    fetch('/api/settings').then(function(x){return x.json()}),
+    fetch('/api/admin/password').then(function(x){return x.json()})
+  ]);
+  var d=r[0], pw=r[1];
+  document.getElementById('c-url').value=d.upstream_url||'';
+  document.getElementById('c-port').value=d.port||8083;
+  document.getElementById('c-lb').value=d.load_balance_strategy||'round_robin';
+  document.getElementById('c-think').checked=!!d.enable_thinking;
+  document.getElementById('c-sys').value=d.system_prompt||'';
+  document.getElementById('c-pm').value=d.system_prompt_mode||'prepend';
+  // Vision settings
+  var v=d.vision||{};
+  document.getElementById('v-enabled').checked=!!v.enabled;
+  document.getElementById('v-qwen-pool').checked=!!v.use_qwen_pool;
+  document.getElementById('v-model').value=v.model||'glm-4v-plus';
+  document.getElementById('v-key').value=v.api_key||'';
+  document.getElementById('v-url').value=v.upstream_url||'';
+  document.getElementById('v-qwen-model').value=v.qwen_vision_model||'vision-model';
+  document.getElementById('v-prompt').value=v.prompt||'';
+  toggleVisionFields();
+  toggleVisionPool();
+  // Password status
+  document.getElementById('c-pw-status').textContent = pw.has_password ? '&#128274; Password is set' : '&#128275; No password (open access)';
+}
+
+function toggleVisionFields(){
+  var on=document.getElementById('v-enabled').checked;
+  document.getElementById('v-fields').style.opacity=on?'1':'0.4';
+  document.getElementById('v-fields').style.pointerEvents=on?'auto':'none';
+}
+
+function toggleVisionPool(){
+  var useQwen=document.getElementById('v-qwen-pool').checked;
+  document.getElementById('v-iflow-fields').style.display=useQwen?'none':'block';
+  document.getElementById('v-qwen-fields').style.display=useQwen?'block':'none';
+}
+
+async function saveCfg(){
+  var body={
+    upstream_url:document.getElementById('c-url').value.trim(),
+    port:parseInt(document.getElementById('c-port').value)||8083,
+    load_balance_strategy:document.getElementById('c-lb').value,
+    enable_thinking:document.getElementById('c-think').checked,
+    system_prompt:document.getElementById('c-sys').value,
+    system_prompt_mode:document.getElementById('c-pm').value
+  };
+  var r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.ok)toast('Settings saved!');else toast('Error','err');
+}
+
+async function saveAdminPassword(){
+  var pw=document.getElementById('c-pw').value;
+  var pw2=document.getElementById('c-pw2').value;
+  if(pw !== pw2){toast('Passwords do not match','err');return}
+  var r=await fetch('/api/admin/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+  if(r.ok){
+    toast(pw?'Password set':'Password removed');
+    document.getElementById('c-pw').value='';
+    document.getElementById('c-pw2').value='';
+    document.getElementById('c-pw-status').textContent=pw?'&#128274; Password is set':'&#128275; No password (open access)';
+    if(pw) document.cookie='admin_session='+encodeURIComponent(pw)+';path=/;samesite=strict';
+  } else toast('Error','err');
+}
+
+async function saveVision(){
+  var body={
+    vision:{
+      enabled:document.getElementById('v-enabled').checked,
+      use_qwen_pool:document.getElementById('v-qwen-pool').checked,
+      model:document.getElementById('v-model').value.trim()||'glm-4v-plus',
+      api_key:document.getElementById('v-key').value.trim(),
+      upstream_url:document.getElementById('v-url').value.trim(),
+      qwen_vision_model:document.getElementById('v-qwen-model').value.trim()||'vision-model',
+      prompt:document.getElementById('v-prompt').value.trim()
+    }
+  };
+  var r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.ok){toast('Vision settings saved!');toggleVisionFields()}else toast('Error','err');
+}
+
+async function loadLog(){
+  if(!_logInterval) _logInterval = setInterval(loadLog, 5000);
+  var lg = await fetch('/api/logs').then(function(x){return x.json()}).catch(function(){return null});
+  var el=document.getElementById('l-list');
+  if(lg === null){el.innerHTML='<div class="empty"><div class="ic">&#9888;</div>Failed to load logs</div>';return}
+  if(!lg.length){el.innerHTML='<div class="empty"><div class="ic">&#128237;</div>No logs yet</div>';return}
+  el.innerHTML=lg.map(function(l){
+    return '<div class="le"><span class="dot '+(l.status==='success'?'dg':'dr')+'"></span>'+
+      '<span style="color:var(--m);font-family:monospace;white-space:nowrap;font-size:11px">'+new Date(l.timestamp).toLocaleString()+'</span>'+
+      '<span class="bx '+(l.status==='success'?'bg2':'br2')+'">'+l.status+'</span>'+
+      '<span style="color:var(--m);font-size:11px;font-family:monospace">'+l.account_name+'</span>'+
+      '<span style="color:var(--a2);font-size:11px;font-family:monospace">'+l.model+'</span>'+
+      '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">'+(l.preview||'<em style="color:var(--m)">—</em>')+'</span>'+
+      '<span style="color:var(--m);font-family:monospace;white-space:nowrap;font-size:11px">'+l.duration+'ms</span></div>';
+  }).join('');
+}
+
+async function clearLogs(){
+  if(!confirm('Clear all logs?'))return;
+  await fetch('/api/logs',{method:'DELETE'});
+  toast('Logs cleared');
+  loadLog();
+}
+
+// ── Registration ──
+var _regPoll = null;
+var _regLogEs = null;
+
+async function loadReg() {
+  await Promise.all([loadRegQueue(), loadRegResults(), loadRegStatus(), loadRegProxies()]);
+}
+
+function _startRegLogStream() {
+  if(_regLogEs) return;
+  var logCard = document.getElementById('r-log-card');
+  var logEl = document.getElementById('r-log');
+  logCard.style.display='';
+  _regLogEs = new EventSource('/api/reg/log-stream');
+  _regLogEs.onmessage = function(e) {
+    logEl.textContent += e.data + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+  _regLogEs.onerror = function() { _regLogEs.close(); _regLogEs = null; };
+}
+
+function _stopRegLogStream() {
+  if(_regLogEs){_regLogEs.close();_regLogEs=null;}
+}
+
+function clearRegLog() {
+  document.getElementById('r-log').textContent='';
+}
+
+async function loadRegQueue() {
+  var ac = await fetch('/api/reg/accounts').then(function(x){return x.json()});
+  document.getElementById('r-count').textContent = ac.length;
+  var el = document.getElementById('r-queue');
+  if(!ac.length){el.innerHTML='<div class="empty"><div class="ic">&#128221;</div>No accounts in queue</div>';return}
+  el.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>#</th><th>Email</th><th>Password</th></tr></thead><tbody>'+
+    ac.map(function(a,i){
+      return '<tr><td>'+(i+1)+'</td><td><code>'+a.email+'</code></td><td style="color:var(--m)">'+a.password.replace(/./g,'•')+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+}
+
+async function loadRegResults() {
+  var rs = await fetch('/api/reg/results').then(function(x){return x.json()});
+  var el = document.getElementById('r-results');
+  if(!rs.length){el.innerHTML='<div class="empty"><div class="ic">&#128273;</div>No results yet</div>';return}
+  el.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Email</th><th>API Key</th><th>Status</th><th>Time</th></tr></thead><tbody>'+
+    rs.map(function(r){
+      return '<tr><td><code style="font-size:12px">'+r.email+'</code></td>'+
+        '<td>'+(r.api_key?'<code class="trunc" style="max-width:180px;display:inline-block">'+r.api_key+'</code>':'<em style="color:var(--m)">—</em>')+'</td>'+
+        '<td><span class="bx '+(r.status==='success'?'bg2':'br2')+'">'+r.status+'</span>'+(r.error?' <span style="color:var(--m);font-size:11px">'+r.error+'</span>':'')+'</td>'+
+        '<td style="color:var(--m);font-size:11px">'+new Date(r.timestamp).toLocaleString()+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+}
+
+async function loadRegStatus() {
+  var st = await fetch('/api/reg/status').then(function(x){return x.json()});
+  var startBtn = document.getElementById('r-start');
+  var stopBtn = document.getElementById('r-stop');
+  // Sync headless checkbox with stored setting
+  var hCb = document.getElementById('r-headless');
+  if(hCb && st.headless !== undefined) hCb.checked = st.headless;
+  if(st.running){
+    startBtn.style.display='none';
+    stopBtn.style.display='inline-flex';
+    if(!_regPoll) _regPoll = setInterval(function(){loadRegResults();loadRegStatus()}, 5000);
+    _startRegLogStream();
+  } else {
+    startBtn.style.display='inline-flex';
+    stopBtn.style.display='none';
+    if(_regPoll){clearInterval(_regPoll);_regPoll=null;}
+    _stopRegLogStream();
+  }
+}
+
+async function saveHeadless() {
+  var headless = document.getElementById('r-headless').checked;
+  // Persist by starting a dummy update — just store via reg/start won't work when not running
+  // So we use a dedicated settings call if available, otherwise it's saved on next Start
+  localStorage.setItem('reg_headless', headless ? '1' : '0');
+}
+
+async function loadRegProxies() {
+  var px = await fetch('/api/reg/proxies').then(function(x){return x.json()});
+  document.getElementById('r-pcount').textContent = px.length;
+  var el = document.getElementById('r-proxies');
+  if(!px.length){el.innerHTML='';return}
+  el.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Host:Port</th><th>User</th><th>Rotate URL</th><th></th></tr></thead><tbody>'+
+    px.map(function(p){
+      return '<tr><td><code>'+p.host+':'+p.port+'</code></td>'+
+        '<td style="color:var(--m);font-size:12px">'+(p.username||'<em>—</em>')+'</td>'+
+        '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--m);font-size:11px">'+(p.rotate_url||'<em>—</em>')+'</td>'+
+        '<td><button class="btn br bs" onclick="delRegProxy(\''+p.id+'\')">Del</button></td></tr>';
+    }).join('')+'</tbody></table></div>';
+}
+
+async function importRegProxies() {
+  var text = document.getElementById('r-proxy-input').value.trim();
+  if(!text){toast('Paste proxies first','err');return}
+  var r = await fetch('/api/reg/proxies/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
+  var d = await r.json();
+  if(r.ok){toast('Imported '+d.added+' proxy(s)');document.getElementById('r-proxy-input').value='';loadRegProxies()}
+  else toast(d.detail||'Error','err');
+}
+
+async function delRegProxy(id) {
+  await fetch('/api/reg/proxies/'+id,{method:'DELETE'});
+  toast('Proxy deleted');loadRegProxies();
+}
+
+async function clearRegProxies() {
+  if(!confirm('Clear all proxies?'))return;
+  await fetch('/api/reg/proxies',{method:'DELETE'});
+  toast('Proxies cleared');loadRegProxies();
+}
+
+async function addRegAccounts() {
+  var text = document.getElementById('r-input').value.trim();
+  if(!text){toast('Paste accounts first','err');return}
+  var r = await fetch('/api/reg/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
+  var d = await r.json();
+  if(r.ok){toast('Added '+d.added+' account(s)');document.getElementById('r-input').value='';loadRegQueue()}
+  else toast(d.detail||'Error','err');
+}
+
+async function clearRegAccounts() {
+  if(!confirm('Clear all accounts in queue?'))return;
+  await fetch('/api/reg/accounts',{method:'DELETE'});
+  toast('Queue cleared');loadRegQueue();
+}
+
+async function clearRegResults() {
+  if(!confirm('Clear all results?'))return;
+  await fetch('/api/reg/results',{method:'DELETE'});
+  toast('Results cleared');loadRegResults();
+}
+
+async function startReg() {
+  var useProxy = document.getElementById('r-proxy').checked;
+  var workers = parseInt(document.getElementById('r-workers').value)||1;
+  var headless = document.getElementById('r-headless').checked;
+  var r = await fetch('/api/reg/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({use_proxy:useProxy,workers:workers,headless:headless})});
+  if(r.ok){toast('Registration started! ('+workers+' worker'+(workers>1?'s':'')+', '+(headless?'headless':'visible')+')');loadRegStatus()}
+  else{var d=await r.json();toast(d.detail||'Error','err')}
+}
+
+async function stopReg() {
+  await fetch('/api/reg/stop',{method:'POST'});
+  toast('Registration stopped');loadRegStatus();
+}
+
+// ── Proxy Pool ──
+
+var _pTab = 'socks5';
+function switchPTab(t) {
+  _pTab = t;
+  document.getElementById('ptab-socks5-body').style.display = t==='socks5'?'':'none';
+  document.getElementById('ptab-http-body').style.display = t==='http'?'':'none';
+  document.getElementById('ptab-socks5').style.background = t==='socks5'?'var(--bp)':'var(--b2)';
+  document.getElementById('ptab-socks5').style.color = t==='socks5'?'#fff':'var(--t)';
+  document.getElementById('ptab-http').style.background = t==='http'?'var(--bp)':'var(--b2)';
+  document.getElementById('ptab-http').style.color = t==='http'?'#fff':'var(--t)';
+}
+
+var _pStatuses = {};
+
+async function loadPool() {
+  var px, cfg;
+  try {
+    var r = await Promise.all([
+      fetch('/api/pool/proxies').then(function(x){return x.json()}),
+      fetch('/api/pool/settings').then(function(x){return x.json()})
+    ]);
+    px=r[0]; cfg=r[1];
+  } catch(e) {
+    document.getElementById('p-list').innerHTML='<div class="empty"><div class="ic">&#9888;</div>Failed to load — '+(e.message||'network error')+'</div>';
+    return;
+  }
+  document.getElementById('p-count').textContent = px.length;
+  document.getElementById('p-max').value = cfg.max_per_proxy||1;
+  var el = document.getElementById('p-list');
+  if(!px.length){el.innerHTML='';return}
+  el.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Type</th><th>Host:Port</th><th>User</th><th>Assigned</th><th>Status</th><th></th></tr></thead><tbody>'+
+    px.map(function(p){
+      var maxP = cfg.max_per_proxy||1;
+      var full = p.assigned >= maxP;
+      var scheme = p.scheme||'socks5';
+      var schemeLabel = scheme==='http'
+        ? '<span class="bx" style="background:#e8f4fd;color:#1a6fa8;font-size:10px">HTTP</span>'
+        : '<span class="bx" style="background:#f0f4e8;color:#4a7a1a;font-size:10px">SOCKS5</span>';
+      var st = _pStatuses[p.id];
+      var stHtml = st===undefined ? '<span style="color:var(--m);font-size:11px">—</span>'
+        : st===true ? '<span style="color:#22c55e;font-size:11px">&#10003; Live</span>'
+        : '<span style="color:#ef4444;font-size:11px">&#10007; Dead</span>';
+      return '<tr><td>'+schemeLabel+'</td>'+
+        '<td><code>'+p.host+':'+p.port+'</code></td>'+
+        '<td style="color:var(--m);font-size:12px">'+(p.username||'<em>—</em>')+'</td>'+
+        '<td><span class="bx '+(full?'br2':'bg2')+'">'+p.assigned+'/'+maxP+'</span></td>'+
+        '<td id="pst-'+p.id+'">'+stHtml+'</td>'+
+        '<td style="display:flex;gap:4px"><button class="btn bg bs" onclick="checkProxy(\''+p.id+'\')" style="font-size:11px;padding:3px 8px">Check</button><button class="btn br bs" onclick="delPoolProxy(\''+p.id+'\')">Del</button></td></tr>';
+    }).join('')+'</tbody></table></div>';
+}
+
+async function importPool() {
+  var scheme = _pTab;
+  var text = document.getElementById('p-input-'+scheme).value.trim();
+  if(!text){toast('Paste proxies first','err');return}
+  // Prefix each line with scheme so store.py parses correctly
+  var lines = text.split('\n').map(function(l){
+    l = l.trim();
+    if(!l) return l;
+    // Skip if already has a scheme prefix
+    if(l.toLowerCase().startsWith('http:') || l.toLowerCase().startsWith('socks5:')) return l;
+    return (scheme==='http' ? 'http:' : 'socks5:') + l;
+  }).filter(Boolean).join('\n');
+  var r = await fetch('/api/pool/proxies/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:lines})});
+  var d = await r.json();
+  if(r.ok){toast('Imported '+d.added+' proxy(s)');document.getElementById('p-input-'+scheme).value='';loadPool()}
+  else toast(d.detail||'Error','err');
+}
+
+async function checkProxy(id) {
+  var el = document.getElementById('pst-'+id);
+  if(el) el.innerHTML='<span style="color:var(--m);font-size:11px">Checking…</span>';
+  var r = await fetch('/api/pool/proxies/'+id+'/check',{method:'POST'});
+  var d = await r.json();
+  _pStatuses[id] = d.alive;
+  if(el) el.innerHTML = d.alive
+    ? '<span style="color:#22c55e;font-size:11px">&#10003; Live</span>'
+    : '<span style="color:#ef4444;font-size:11px">&#10007; Dead</span>';
+  if(!d.alive && d.reassigned) toast('Proxy dead — accounts reassigned','err');
+}
+
+async function checkAllProxies() {
+  var r = await fetch('/api/pool/proxies').then(function(x){return x.json()}).catch(function(){return []});
+  if(!r.length){toast('No proxies in pool','err');return}
+  toast('Checking '+r.length+' proxy(s) in parallel…');
+  await Promise.all(r.map(function(p){return checkProxy(p.id)}));
+  toast('Check complete');
+}
+
+async function savePoolMax() {
+  var max = parseInt(document.getElementById('p-max').value)||1;
+  await fetch('/api/pool/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_per_proxy:max})});
+  toast('Max per proxy set to '+max);loadPool();
+}
+
+async function delPoolProxy(id) {
+  if(!confirm('Delete this proxy?'))return;
+  await fetch('/api/pool/proxies/'+id,{method:'DELETE'});
+  toast('Proxy deleted');loadPool();
+}
+
+async function clearPool() {
+  if(!confirm('Clear entire proxy pool?'))return;
+  await fetch('/api/pool/proxies',{method:'DELETE'});
+  toast('Pool cleared');loadPool();
+}
+
+async function reassignAllProxies() {
+  if(!confirm('Reassign proxies from pool to all accounts? This will reset all current proxy assignments.'))return;
+  var r = await fetch('/api/pool/reassign-all',{method:'POST'});
+  var d = await r.json();
+  if(r.ok){toast('Reassigned proxies to '+d.updated+' account(s)');loadPool();loadKeys()}
+  else toast(d.detail||'Error','err');
+}
+
+async function reassignProxy(aid) {
+  var r = await fetch('/api/accounts/'+aid+'/reassign-proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(r.ok){toast('Proxy reassigned');loadKeys()}
+  else{var d=await r.json();toast(d.detail||'Error','err')}
+}
+
+loadDash();
+</script>
+</body>
+</html>

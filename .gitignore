@@ -1,0 +1,20 @@
+# Sensitive data
+accounts.txt
+data.json
+reg_results.json
+reg_proxies.json
+*.png
+
+# Logs
+proxy.log
+proxy.err
+tunnel.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.deps_installed
+
+# Env
+.env
