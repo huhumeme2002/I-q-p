@@ -977,16 +977,46 @@ def _estimate_tokens(body: dict) -> int:
     return max(1, total)
 
 
-# Max input tokens before trimming old messages (leave room for output)
+# Max input tokens before trimming (configurable via CONTEXT_LIMIT env var)
 _CONTEXT_LIMIT = int(os.environ.get("CONTEXT_LIMIT", "60000"))
+_TOOL_RESULT_TRUNCATE = 500  # chars to keep per tool result when truncating
+
+
+def _truncate_tool_results(messages: list, keep_last_n: int = 4) -> list:
+    """Pass 1: truncate large tool_result content in older messages."""
+    result = []
+    for i, msg in enumerate(messages):
+        # Keep last N messages intact
+        if i >= len(messages) - keep_last_n:
+            result.append(msg)
+            continue
+        content = msg.get("content", "")
+        if not isinstance(content, list):
+            result.append(msg)
+            continue
+        new_content = []
+        changed = False
+        for block in content:
+            if block.get("type") == "tool_result":
+                inner = block.get("content", "")
+                text = inner if isinstance(inner, str) else (
+                    " ".join(b.get("text", "") for b in inner if isinstance(b, dict) and b.get("type") == "text")
+                    if isinstance(inner, list) else ""
+                )
+                if len(text) > _TOOL_RESULT_TRUNCATE:
+                    truncated = text[:_TOOL_RESULT_TRUNCATE] + "…[truncated]"
+                    new_content.append({**block, "content": truncated})
+                    changed = True
+                    continue
+            new_content.append(block)
+        result.append({**msg, "content": new_content} if changed else msg)
+    return result
 
 
 def _trim_messages(body: dict) -> dict:
-    """Trim oldest messages when estimated input tokens exceed _CONTEXT_LIMIT.
-
-    Keeps: system prompt, tool definitions, and the most recent messages.
-    Always keeps at least the last 2 messages (last user turn + last assistant turn).
-    Trims from the oldest messages first, never removes the last 2.
+    """Smart context trimming:
+    1. Truncate tool_result content in older messages first
+    2. If still over limit, drop oldest messages (keep at least last 4)
     """
     if _estimate_tokens(body) <= _CONTEXT_LIMIT:
         return body
@@ -995,18 +1025,23 @@ def _trim_messages(body: dict) -> dict:
     if len(messages) <= 2:
         return body
 
-    # Trim from oldest, keep at least last 2
-    while len(messages) > 2:
-        trimmed = dict(body)
-        trimmed["messages"] = messages
-        if _estimate_tokens(trimmed) <= _CONTEXT_LIMIT:
-            break
-        messages.pop(0)
+    # Pass 1: truncate old tool results
+    messages = _truncate_tool_results(messages)
+    candidate = {**body, "messages": messages}
+    if _estimate_tokens(candidate) <= _CONTEXT_LIMIT:
+        logger.info(f"[ContextTrim] Truncated tool results → ~{_estimate_tokens(candidate)} tokens")
+        return candidate
 
-    result = dict(body)
-    result["messages"] = messages
-    logger.info(f"[ContextTrim] Trimmed to {len(messages)} messages (~{_estimate_tokens(result)} tokens)")
-    return result
+    # Pass 2: drop oldest messages, keep at least last 4
+    while len(messages) > 4:
+        messages.pop(0)
+        candidate = {**body, "messages": messages}
+        if _estimate_tokens(candidate) <= _CONTEXT_LIMIT:
+            break
+
+    logger.info(f"[ContextTrim] Trimmed to {len(messages)} messages (~{_estimate_tokens(candidate)} tokens)")
+    return candidate
+
 async def count_tokens(request: Request):
     try:
         body = await request.json()
