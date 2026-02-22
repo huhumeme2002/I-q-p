@@ -522,7 +522,16 @@ def _should_auto_continue(
     - response has no tool_calls
     """
     ac = store.get_auto_continue_settings()
+    ac_logger = logging.getLogger("proxy.autocontinue")
+
+    num_tools = len(body.get("tools", []))
+    num_msgs = len(body.get("messages", []))
+
     if not ac.get("enabled"):
+        ac_logger.debug(
+            f"[AutoContinue:SKIP] disabled | tokens={completion_tokens} stop={stop_reason} "
+            f"tool_calls={has_tool_calls} tools={num_tools} msgs={num_msgs}"
+        )
         return False
 
     threshold = ac.get("token_threshold", 80)
@@ -530,20 +539,40 @@ def _should_auto_continue(
 
     # If only_with_tools is set, skip if the request has no tools
     if only_with_tools and not body.get("tools"):
+        ac_logger.info(
+            f"[AutoContinue:SKIP] no tools in request | tokens={completion_tokens} stop={stop_reason} "
+            f"tool_calls={has_tool_calls} tools={num_tools} msgs={num_msgs}"
+        )
         return False
 
     # Must be end_turn (not tool_use or max_tokens)
     if stop_reason != "end_turn":
+        ac_logger.debug(
+            f"[AutoContinue:SKIP] stop_reason={stop_reason} (not end_turn) | tokens={completion_tokens} "
+            f"tool_calls={has_tool_calls} tools={num_tools} msgs={num_msgs}"
+        )
         return False
 
     # Must have low token count
     if completion_tokens >= threshold:
+        ac_logger.info(
+            f"[AutoContinue:SKIP] tokens={completion_tokens} >= threshold={threshold} | stop={stop_reason} "
+            f"tool_calls={has_tool_calls} tools={num_tools} msgs={num_msgs}"
+        )
         return False
 
     # Must NOT have tool calls
     if has_tool_calls:
+        ac_logger.debug(
+            f"[AutoContinue:SKIP] has_tool_calls=True | tokens={completion_tokens} stop={stop_reason} "
+            f"tools={num_tools} msgs={num_msgs}"
+        )
         return False
 
+    ac_logger.warning(
+        f"[AutoContinue:TRIGGER] tokens={completion_tokens} < threshold={threshold} | stop={stop_reason} "
+        f"tool_calls={has_tool_calls} tools={num_tools} msgs={num_msgs}"
+    )
     return True
 
 
@@ -1261,12 +1290,32 @@ async def messages(request: Request):
                             else:
                                 yield chunk
 
+                    # Compute effective token count: prefer usage-reported, fallback to chunk count,
+                    # cross-check with response text length for iFlow (no usage in stream)
+                    _resp_text_len = len(_usage.get("response_text", ""))
+                    _text_est_tokens = max(1, _resp_text_len // 4) if _resp_text_len > 0 else 0
+                    _effective_tokens = _usage.get("completion_tokens", 0) or max(token_count, _text_est_tokens)
+
                     if _dbg:
-                        logger.info(f"[DEBUG] ← {cur_model} | stream=True | usage={_usage} | buffered={not threshold_passed}")
+                        logger.info(
+                            f"[DEBUG] ← {cur_model} | stream=True | usage={_usage} | "
+                            f"token_count={token_count} text_est={_text_est_tokens} effective={_effective_tokens} | "
+                            f"buffered={not threshold_passed}"
+                        )
+
+                    # Always log stream completion for auto-continue diagnostics
+                    _ac_log = logging.getLogger("proxy.autocontinue")
+                    _ac_log.info(
+                        f"[AutoContinue:CHECK] stream done | effective_tokens={_effective_tokens} "
+                        f"(chunk={token_count}, text_est={_text_est_tokens}, reported={_usage.get('completion_tokens', 0)}) | "
+                        f"stop={_usage.get('stop_reason', '?')} | tool_calls={_usage.get('has_tool_calls', False)} | "
+                        f"threshold_passed={threshold_passed} | ac_attempt={ac_attempt}/{ac_max_retries} | "
+                        f"tools={len(body.get('tools', []))} msgs={len(body.get('messages', []))}"
+                    )
 
                     # If we never passed the threshold, check for lazy response
                     if not threshold_passed:
-                        comp_tokens = _usage.get("completion_tokens", 0) or token_count
+                        comp_tokens = _effective_tokens
                         stop = _usage.get("stop_reason", "end_turn")
                         has_tc = _usage.get("has_tool_calls", False)
                         resp_text = _usage.get("response_text", "")
@@ -1402,6 +1451,15 @@ async def messages(request: Request):
 
             if _dbg:
                 logger.info(f"[DEBUG] ← {cur_model} | stream=False | finish={finish} | usage={usage} | ac_attempt={ac_attempt}")
+
+            # Always log for auto-continue diagnostics
+            _ac_log = logging.getLogger("proxy.autocontinue")
+            _ac_log.info(
+                f"[AutoContinue:CHECK] non-stream | comp_tokens={comp_tokens} | "
+                f"stop={stop_reason} | tool_calls={has_tc} | "
+                f"ac_attempt={ac_attempt}/{ac_max_retries} | "
+                f"tools={len(body.get('tools', []))} msgs={len(body.get('messages', []))}"
+            )
 
             # ── Auto-continue check ──
             resp_text = (openai_resp.get("choices", [{}])[0].get("message", {}).get("content") or "")
