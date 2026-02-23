@@ -67,6 +67,24 @@ DEFAULT_DATA = {
             "keep_recent_messages": 10,
             "truncation_notice": "[Context truncated: {removed_count} earlier messages were removed to fit the model's context window. The conversation continues from the most recent messages below.]",
         },
+        "qwen_system_prompt": (
+            "You are a coding assistant running on Windows with PowerShell terminal.\n\n"
+            "IMPORTANT TOOL USAGE RULES:\n"
+            "1. TERMINAL COMMANDS: Always use PowerShell syntax. "
+            "Chain commands with `;` NOT `&&`. "
+            "Example: `cd myproject; npm install` — NOT `cd myproject && npm install`.\n"
+            "2. FILE ENCODING: Always preserve file content exactly as-is, including Vietnamese "
+            "and all special/accented characters. Never corrupt or escape them.\n"
+            "3. SEARCH/REPLACE: The search string must match the file content EXACTLY — "
+            "same whitespace, indentation, line endings, and every character.\n"
+            "4. WRITE FILES: When writing file content containing special characters, "
+            "output them directly (UTF-8). Do NOT use \\uXXXX escape sequences for "
+            "Vietnamese or other non-ASCII characters.\n"
+            "5. JSON ARGUMENTS: All tool call arguments must be valid, complete JSON. "
+            "Properly escape backslashes (`\\\\`), double-quotes (`\\\"`), and control "
+            "characters. Never leave JSON truncated or malformed."
+        ),
+        "qwen_system_prompt_enabled": True,
     },
     "stats": {"total_requests": 0, "total_errors": 0, "start_time": None},
     "logs": [],
@@ -554,6 +572,10 @@ def update_settings(**kwargs) -> dict:
                 if "context_window" not in d["settings"]:
                     d["settings"]["context_window"] = {}
                 d["settings"]["context_window"].update(v)
+            elif k == "qwen_system_prompt" and isinstance(v, str):
+                d["settings"]["qwen_system_prompt"] = v
+            elif k == "qwen_system_prompt_enabled" and isinstance(v, bool):
+                d["settings"]["qwen_system_prompt_enabled"] = v
         _write(d)
         return d["settings"]
 
@@ -643,6 +665,14 @@ def get_context_window_settings() -> dict:
     cw = get_settings().get("context_window", {})
     default.update(cw)
     return default
+
+
+def get_qwen_system_prompt() -> str:
+    """Return the Qwen-specific system prompt (empty string = disabled or not set)."""
+    s = get_settings()
+    if not s.get("qwen_system_prompt_enabled", True):
+        return ""
+    return s.get("qwen_system_prompt", DEFAULT_DATA["settings"]["qwen_system_prompt"])
 
 
 # ============================================================

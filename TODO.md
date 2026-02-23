@@ -1,20 +1,20 @@
-# Context Window Management Feature
+# Qwen Tool Call Error Fixes
 
 ## Steps
 
-- [x] 1. `store.py` — Add context_window settings (DEFAULT_DATA, getter, update_settings)
-- [x] 2. `proxy.py` — Add `_truncate_context(body)` function with smart message trimming + DEEP_TRIM
-- [x] 3. `proxy.py` — Wire `_truncate_context()` into `/v1/messages` endpoint
-- [x] 4. `static/admin.html` — Add Context Window settings UI card
-- [x] 5. `data.json` — Enable context_window (max_tokens=16000, keep_recent_messages=10)
-- [x] 6. Git push
+- [x] 1. `store.py` — Add `qwen_system_prompt` to DEFAULT_DATA + getter + update_settings
+- [x] 2. `proxy.py` — Add `_repair_tool_json()` function (5-pass repair for malformed JSON from Qwen)
+- [x] 3. `proxy.py` — Add `_apply_qwen_system_prompt()` function
+- [x] 4. `proxy.py` — Wire `_apply_qwen_system_prompt()` into `anthropic_to_openai()` for Qwen provider
+- [x] 5. `proxy.py` — Use `_repair_tool_json()` in `openai_to_anthropic()` instead of bare try/except
+- [x] 6. `proxy.py` — Add UTF-8 surrogatepass normalization for tool arg chunks in `stream_anthropic_sse()`
+- [x] 7. `static/admin.html` — Add "Qwen Tool Guidance" card UI + loadCfg/saveQwenPrompt/resetQwenPrompt JS
+
+## ✅ COMPLETE
 
 ## Design Notes
-- Always keep: system prompt + last 10 messages (lowered from 20 — 20 msgs with tool calls easily exceed 16k)
-- Trim oldest messages first, keeping tool_use/tool_result pairs together
-- Insert truncation notice at cut point
-- Fast path: skip if total tokens < max_tokens (no deepcopy)
-- DEEP_TRIM: when protected messages + tools still exceed limit, trim protected from oldest (MIN_KEEP=4)
-- Log [ContextWindow] with before/after stats, [ContextWindow:DEEP_TRIM] for aggressive trimming
-- Auto-Continue: STUCK detection skips retry when model returns tokens but empty text
-- Escalating nudge messages (gentle → strong → forceful) with attempt number
+- `_repair_tool_json`: 5-pass repair: direct parse → truncate at last `}`/`]` → strip control chars → remove trailing commas → combined
+- `_apply_qwen_system_prompt`: prepend Qwen guidance to existing system prompt (only when provider=qwen)
+- Default prompt guides: PowerShell syntax (`;` not `&&`), UTF-8 file encoding, exact search/replace matching, valid JSON tool args
+- Admin UI: textarea to customize Qwen system prompt, toggle to enable/disable, "Reset to Default" button
+- Encoding normalization: `encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")` on streamed tool arg chunks

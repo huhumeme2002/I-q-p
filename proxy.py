@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import base64
 import copy
+import re as _re
 from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -874,6 +875,87 @@ def apply_global_system_prompt(original: str) -> str:
         return f"{global_prompt}\n\n{original}".strip() if original.strip() else global_prompt
 
 
+def _repair_tool_json(raw: str) -> dict:
+    """Attempt to parse and repair malformed JSON from Qwen tool call arguments.
+
+    Tries multiple repair strategies in order:
+    1. Direct parse (fast path)
+    2. Truncate at last complete } or ]
+    3. Strip control characters (keep \\n \\r \\t) and retry
+    4. Remove trailing commas before } or ]
+    5. Combined: strip + trailing commas + truncate
+    Falls back to {"_raw": raw} if all strategies fail.
+    """
+    if not raw or raw.strip() in ("{}", ""):
+        return {}
+
+    # Pass 1: direct parse
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Pass 2: truncate at last closing brace/bracket
+    try:
+        last_brace = max(raw.rfind("}"), raw.rfind("]"))
+        if last_brace > 0:
+            return json.loads(raw[:last_brace + 1])
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Pass 3: strip control characters (keep \n \r \t)
+    try:
+        cleaned = "".join(c for c in raw if c >= " " or c in "\n\r\t")
+        return json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Pass 4: remove trailing commas before } or ]
+    try:
+        fixed = _re.sub(r",\s*([}\]])", r"\1", raw)
+        return json.loads(fixed)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Pass 5: combined — strip control chars + trailing commas + truncate
+    try:
+        cleaned = "".join(c for c in raw if c >= " " or c in "\n\r\t")
+        fixed = _re.sub(r",\s*([}\]])", r"\1", cleaned)
+        last_brace = max(fixed.rfind("}"), fixed.rfind("]"))
+        if last_brace > 0:
+            fixed = fixed[:last_brace + 1]
+        return json.loads(fixed)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    logger.warning("[ToolJSON] Failed to repair tool arguments (len=%d): %s", len(raw), raw[:120])
+    return {"_raw": raw}
+
+
+def _apply_qwen_system_prompt(body: dict) -> dict:
+    """Inject Qwen-specific system prompt guidance into the request body.
+
+    Prepends the Qwen tool usage guidance to the existing system prompt.
+    Only called when provider == 'qwen'.
+    """
+    qwen_prompt = store.get_qwen_system_prompt()
+    if not qwen_prompt:
+        return body
+
+    existing = body.get("system", "")
+    if isinstance(existing, list):
+        existing_text = " ".join(
+            b.get("text", "") for b in existing if b.get("type") == "text"
+        )
+    else:
+        existing_text = existing or ""
+
+    combined = (qwen_prompt + "\n\n" + existing_text).strip() if existing_text.strip() else qwen_prompt
+    body = dict(body)
+    body["system"] = combined
+    return body
+
+
 def anthropic_messages_to_openai(body: dict) -> list:
     messages = []
 
@@ -958,6 +1040,8 @@ _QWEN_DUMMY_TOOL = {
 
 def anthropic_to_openai(body: dict, model: str, provider: str = "iflow") -> dict:
     """Convert Anthropic request → OpenAI-compatible request, branching by provider."""
+    if provider == "qwen":
+        body = _apply_qwen_system_prompt(body)
     messages = anthropic_messages_to_openai(body)
     is_stream = body.get("stream", False)
     has_tools = bool(body.get("tools"))
@@ -1023,10 +1107,7 @@ def openai_to_anthropic(openai_resp: dict, model: str) -> dict:
     tool_calls = message.get("tool_calls") or []
     for tc in tool_calls:
         func = tc.get("function", {})
-        try:
-            input_data = json.loads(func.get("arguments", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            input_data = {"_raw": func.get("arguments", "")}
+        input_data = _repair_tool_json(func.get("arguments", "{}") or "{}")
 
         content.append({
             "type": "tool_use",
@@ -1180,6 +1261,12 @@ async def stream_anthropic_sse(
                 })
 
             args_chunk = (tc_delta.get("function") or {}).get("arguments", "")
+            # Normalize encoding to prevent garbled UTF-8 in tool arguments
+            if args_chunk:
+                try:
+                    args_chunk = args_chunk.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+                except Exception:
+                    pass
             if args_chunk:
                 tool_blocks[tc_index]["args"] += args_chunk
                 anthropic_idx = tool_block_anthropic_index[tc_index]

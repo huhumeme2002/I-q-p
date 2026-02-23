@@ -285,6 +285,25 @@ pre{background:var(--s2);padding:14px;border-radius:8px;font-family:monospace;fo
     </div>
     <button class="btn bp" onclick="saveCW()">Save Context Window Settings</button>
   </div>
+
+  <!-- Qwen Tool Guidance -->
+  <div class="card" id="qwen-sp-card" style="margin-top:14px">
+    <div class="ct" style="display:flex;align-items:center;justify-content:space-between">
+      <span>&#129302; Qwen Tool Guidance <span style="font-size:10px;color:var(--a2);font-weight:400;text-transform:none">(Fix tool call errors)</span></span>
+      <label class="tg"><input type="checkbox" id="qwen-sp-enabled" onchange="saveQwenPrompt()"><span class="ts"></span></label>
+    </div>
+    <p style="color:var(--m);font-size:12px;margin-bottom:12px">
+      Inject a system prompt for Qwen requests to fix common errors: malformed JSON tool args, wrong terminal syntax (<code>&&</code> vs <code>;</code>), encoding corruption (Vietnamese/UTF-8), and broken search/replace patterns.
+    </p>
+    <div class="fg">
+      <label class="fl">Guidance Prompt <span style="font-weight:400;text-transform:none;color:var(--m)">(injected before system prompt for Qwen requests)</span></label>
+      <textarea id="qwen-sp-text" class="fi" rows="10" style="font-family:monospace;font-size:12px;resize:vertical"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn bp" onclick="saveQwenPrompt()">Save Qwen Guidance</button>
+      <button class="btn bg bs" onclick="resetQwenPrompt()">Reset to Default</button>
+    </div>
+  </div>
 </div>
 
 <!-- Registration -->
@@ -856,6 +875,9 @@ async function loadCfg(){
   document.getElementById('cw-max-tokens').value=cw.max_tokens||60000;
   document.getElementById('cw-keep-recent').value=cw.keep_recent_messages||20;
   document.getElementById('cw-notice').value=cw.truncation_notice||'[Note: {removed} older messages were truncated to fit context window. {kept} recent messages preserved.]';
+  // Qwen Tool Guidance
+  document.getElementById('qwen-sp-enabled').checked = d.qwen_system_prompt_enabled !== false;
+  document.getElementById('qwen-sp-text').value = d.qwen_system_prompt || '';
 }
 
 function toggleVisionFields(){
@@ -909,6 +931,35 @@ async function saveAC(){
   };
   var r=await apiFetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   if(r.ok)toast('Auto-Continue settings saved');else toast('Error saving settings','err');
+}
+
+async function saveQwenPrompt(){
+  var payload={
+    qwen_system_prompt: document.getElementById('qwen-sp-text').value,
+    qwen_system_prompt_enabled: document.getElementById('qwen-sp-enabled').checked
+  };
+  var r=await apiFetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(r.ok)toast('Qwen guidance saved');else toast('Error saving Qwen guidance','err');
+}
+
+async function resetQwenPrompt(){
+  if(!confirm('Reset Qwen guidance to default?'))return;
+  var def = 'IMPORTANT RULES FOR TOOL CALLS AND TERMINAL COMMANDS:\n\n' +
+    '1. TERMINAL COMMANDS: Always use semicolon (;) to chain commands, NEVER use && or ||.\n' +
+    '   Wrong:  cd /path && npm install\n' +
+    '   Correct: cd /path; npm install\n\n' +
+    '2. JSON TOOL ARGUMENTS: Always output valid, complete JSON. Never truncate or add trailing commas.\n' +
+    '   - All strings must be properly closed with matching quotes\n' +
+    '   - No trailing commas before } or ]\n' +
+    '   - Escape special characters inside strings (\\n, \\t, \\")\n\n' +
+    '3. FILE ENCODING: Always use UTF-8. Preserve all Unicode characters (Vietnamese, CJK, etc.) exactly.\n' +
+    '   Never corrupt or replace non-ASCII characters with placeholders.\n\n' +
+    '4. SEARCH/REPLACE: The SEARCH block must match the file content EXACTLY, character for character.\n' +
+    '   Include enough surrounding context lines to make the match unique.\n' +
+    '   Never use approximate or partial matches.';
+  document.getElementById('qwen-sp-text').value = def;
+  document.getElementById('qwen-sp-enabled').checked = true;
+  await saveQwenPrompt();
 }
 
 async function saveCW(){
